@@ -1,0 +1,103 @@
+# Commands - Turkish + English aliases (case-insensitive)
+
+# Bot Commands
+PING_COMMAND : ["ping"]
+START_COMMAND : ["start"]
+HELP_COMMAND : ["yardım", "help", "yardim"]
+SETTINGS_COMMAND : ["settings", "ayarlar"]
+RELOAD_COMMAND : ["admincache", "reload"]
+GSTATS_COMMAND : ["gstats"]
+STATS_COMMAND : ["stats", "istatistik"]
+LANGUAGE_COMMAND : ["lang", "language", "langs", "dil"]
+
+# Play Commands
+PLAY_COMMAND : ["oynat", "play", "voynat", "vplay", "koynat", "cplay", "kvoynat", "cvplay", "oynathemen", "playforce", "voynathemen", "vplayforce", "koynathemen", "cplayforce", "kvoynathemen", "cvplayforce"]
+PLAYMODE_COMMAND : ["oynatmodu", "playmode"]
+CHANNELPLAY_COMMAND : ["kanalmodu", "channelplay", "cplaymode"]
+STREAM_COMMAND : ["stream", "kstream", "canlıhemen", "live"]
+
+# Playlists
+PLAYLIST_COMMAND : ["listem", "playlist", "myplaylist"]
+DELETEPLAYLIST_COMMAND : ["listemitemizle", "delplaylist", "clearplaylist"]
+
+# Tools
+QUEUE_COMMAND : ["sira", "queue", "ksira", "cqueue", "player", "cplayer", "playing", "kplaying", "siram"]
+SONG_COMMAND : ["indirrr", "video", "song", "download"]
+BUL_COMMAND : ["bulllll", "search", "find"]
+LYRICS_COMMAND : ["söz", "lyrics", "soz"]
+
+# Admin Commands
+AUTH_COMMAND : ["yetkiver", "auth"]
+UNAUTH_COMMAND : ["yetkial", "unauth"]
+AUTHUSERS_COMMAND : ["yetkilistesi", "authusers"]
+PAUSE_COMMAND : ["durdur", "pause", "kdurdur", "cpause"]
+RESUME_COMMAND : ["devam", "resume", "kdevam", "cresume"]
+MUTE_COMMAND : ["botmute", "mute", "kmute", "cmute"]
+UNMUTE_COMMAND : ["botunmute", "unmute", "kunmute", "cunmute"]
+STOP_COMMAND : ["son", "end", "stop", "kson", "kend", "cend", "cstop"]
+SKIP_COMMAND : ["atla", "skip", "katla", "cskip", "next"]
+SHUFFLE_COMMAND : ["karistir", "shuffle", "kkaristir", "cshuffle"]
+LOOP_COMMAND : ["tekrarla", "loop", "ktekrarla", "cloop"]
+SEEK_COMMAND : ["ileri", "seek", "kileri", "cseek", "gerial", "seekback", "kgerial", "cseekback"]
+RESTART_COMMAND : ["restart"]
+
+# Sudo
+ADDSUDO_COMMAND : ["addsudo"]
+DELSUDO_COMMAND : ["delsudo"]
+SUDOUSERS_COMMAND : ["sudolist"]
+ID_COMMAND : ["id"]
+
+# Broadcast
+BROADCAST_COMMAND : ["reklam", "broadcast"]
+
+# Blacklist
+BLACKLISTCHAT_COMMAND : ["grupban", "blacklistchat"]
+WHITELISTCHAT_COMMAND : ["ungrupban", "whitelistchat"]
+BLACKLISTEDCHAT_COMMAND : ["grupbanlist", "blacklisted"]
+
+# Video Calls
+VIDEOLIMIT_COMMAND : ["videolimit"]
+VIDEOMODE_COMMAND : ["videomode"]
+
+# Maintenance
+MAINTENANCE_COMMAND : ["bakım", "maintenance", "bakim"]
+TEMIZLEME_COMMAND : ["sil", "delete"]
+LOGGER_COMMAND : ["logger"]
+SAHIP_COMMAND : ["miss", "owner"]
+KOMUTLAR_COMMAND : ["komutlar", "commands"]
+CKOMUTLAR_COMMAND : ["kkomutlar", "ccommands"]
+
+# Heroku
+GETLOG_COMMAND : ["get_log"]
+GETVAR_COMMAND : ["get_var"]
+DELVAR_COMMAND : ["del_var"]
+SETVAR_COMMAND : ["set_var"]
+USAGE_COMMAND : ["usage"]
+VARS_COMMAND : ["bilgi", "vars"]
+
+# Basic
+UPDATE_COMMAND : ["update"]
+REBOOT_COMMAND : ["reboot"]
+AUTOEND_COMMAND : ["autoend"]
+
+# Private mode
+AUTHORIZE_COMMAND : ["grupizin", "authorize"]
+UNAUTHORIZE_COMMAND : ["ungrupizin", "unauthorize"]
+AUTHORIZED_COMMAND : ["grupliste", "authorized"]
+
+# Block
+BLOCK_COMMAND : ["block"]
+UNBLOCK_COMMAND : ["unblock"]
+BLOCKED_COMMAND : ["blocklist", "blocked"]
+
+# Speedtest
+SPEEDTEST_COMMAND : ["hiz", "speedtest"]
+
+# Voice
+ACTIVEVC_COMMAND : ["aktifses", "activevc"]
+ACTIVEVIDEO_COMMAND : ["aktifvideo", "activevideo"]
+
+# Gban
+GBAN_COMMAND : ["gban"]
+UNGBAN_COMMAND : ["ungban"]
+GBANNED_COMMAND : ["gbannedusers"]

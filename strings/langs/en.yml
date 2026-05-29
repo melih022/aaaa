@@ -1,0 +1,141 @@
+name : English
+
+# General
+general_1 : "Reply to a user's message or give a username/user_id."
+general_2 : "Error! Invalid command usage."
+general_3 : "Some **exceptions occurred** while processing your query.\n\nException type: {0}"
+general_4 : "You are an anonymous admin in this group!\nSwitch back to your user account from your admin rights."
+general_5 : "You must be an admin with voice-chat rights to perform this action."
+general_6 : "Bot is not streaming in any voice chat."
+
+# Telegram.py
+tg_1 : "Bot is currently **overloaded** with downloads.\n\n**Estimated retry:** {0}"
+tg_2 : "Could not download media from Telegram."
+
+# Call.py
+call_1 : "Bot requires **Admin** rights to invite the assistant account to your channel.\n\nDisable channel-play mode with: /playmode"
+call_2 : "Assistant is banned in your group/channel — please unban it.\n\n**Assistant username:** @{0}\n**Assistant ID:** {1}"
+call_3 : "Exception while inviting the assistant to your chat.\n\n**Reason:** {0}"
+call_4 : "Bot requires **Invite users via link** permission to invite the assistant."
+call_5 : "Assistant will join in 5 seconds.. Please wait!"
+call_6 : "Assistant [{0}] joined successfully.\nStarting music now\n\n**ENJOY LISTENING**"
+call_7 : "**Harmful admin rights granted**\n\nPlease remove **BAN USERS** rights from the bot."
+call_8 : "**Harmful admin rights granted**\n\nPlease remove **ADD NEW ADMINS** rights from the bot."
+call_9 : "**Could not change the stream**\nUse /skip to skip the track again."
+call_10 : "Downloading next track from the playlist"
+call_11 : "Please add @{0} [ID: {1}] to your channel.\n\nBot cannot fetch channel details."
+
+# Auth
+auth_1 : "You can have at most 20 users in your group's Authorized Users List (AUL)."
+auth_2 : "Added to the group's Authorized Users list."
+auth_3 : "Already in the Authorized Users list."
+auth_4 : "Removed from the group's Authorized Users list."
+auth_5 : "Target user is not authorized."
+auth_6 : "Loading Authorized Users... Please wait."
+auth_7 : "**Authorized Users [AUL]:**\n\n"
+auth_8 : "┗ Added by:-"
+
+# Admins
+admin_1 : "❌ **Track is already paused.**"
+admin_2 : "🤐 **TRACK PAUSED!** Paused by {}!"
+admin_3 : "**Music is already resumed.**"
+admin_4 : "🥳 **Track resumed!** Resumed by {}!"
+admin_5 : "**Music is already muted.**"
+admin_6 : "🎧 Voice chat muted by {}!"
+admin_7 : "Music is already unmuted."
+admin_8 : "🎧 Voice chat unmuted by {}!"
+admin_9 : "❌ **Track ended!** Ended by {}!"
+admin_10 : "🎧 **Voice chat skipped by {}!. No more music in queue.**"
+admin_11 : "Error while changing the stream to **{0}**\n\nPlease use /skip again."
+admin_12 : "Cannot skip to a specific track because looping is enabled. Disable loop via `/loop disable`."
+admin_13 : "Please use numeric numbers like 1, 2 or 4 for a specific track."
+admin_14 : "At least 2 tracks needed in the queue to skip to a specific number. Check the queue with /queue"
+admin_15 : "Not enough tracks in the queue. Please choose a number between 1 and {0}"
+admin_16 : "Could not skip to the specific track.\n\nCheck the queue with /queue"
+admin_17 : "{0}.. Please wait"
+admin_18 : "Admin list not found\n\nPlease reload via /admincache or /reload"
+admin_19 : "You must be a voice-chat-rights admin to do this.\nIf you are already an admin, reload admincache via /admincache or /reload"
+admin_20 : "✅ **Bot restarted!**\n✅ **Admin list refreshed!**"
+admin_21 : "Nothing to shuffle in the queue."
+admin_22 : "Could not shuffle.\n\nCheck the queue: /queue"
+admin_23 : "**Queue shuffled: {0}**\n\nCheck the shuffled queue: /queue"
+admin_24 : "**Usage:**\n/loop [enable/disable] or [number 1-10]\n\n**Example:** /loop 5"
+admin_25 : "Track played by {0} will be looped **{1}** times 🔁 The bot will repeat the current stream in voice chat **{1}** times 🔁"
+admin_26 : "Please use numbers 1-10 for loop count."
+admin_27 : "Loop playback disabled."
+admin_28 : "**Usage:**\n/seek or /seekback [Specify seconds!]"
+admin_29 : "**Please use numeric seconds like 10-20-30 to seek.**"
+admin_30 : "Sorry, cannot seek a stream that is currently playing. Only skip/stop is possible."
+admin_31 : "Bot cannot seek because the given duration is too high. Try a lower duration and remember 10 seconds must remain after seek.\n\nCurrently playing **{0}** of **{1}** minutes"
+admin_32 : "Please wait... Seeking the active stream."
+admin_33 : "Stream seeked to {0} minutes."
+admin_34 : "Could not seek the current stream."
+
+# Start
+start_1 : "Thanks for inviting me to the {0} group.\n\nFor any help check our support group or channel."
+start_2 : "**Hello\nI'm a Video and Music Bot.\n\nFor more info press the Google Info button or use /help to contact my owner.**"
+start_3 : "Our bot's name is {0}\n\n**Required steps for the bot to work**:\n1) Delete messages\n2) Manage video chats\n3) Invite via link\nYou must grant the bot these permissions.\n💡 Type /commands to see all my commands.\n\n**🎶 ENJOY LISTENING 🎶**"
+
+# Play
+play_1 : "Searching the platform..."
+play_2 : "Streaming is **not supported** for live streams in {0} mode.\nUse /stream command for live streaming."
+play_3 : "Could not process the query!"
+play_4 : "**Telegram playlist not supported** in playlist mode."
+play_5 : "Could not process the audio file.\n\nAudio file size must be smaller than 100 MB"
+play_6 : "Could not process the video file.\n\nVideo file size must be smaller than 1 GB"
+play_7 : "**Telegram media** is not supported in playlist mode."
+play_8 : "There is no suitable result for your query.."
+play_9 : "Could not process the query!"
+play_10 : "Sorry I couldn't find anything matching."
+play_11 : "**🎵 Title:** {0}\n**🕒 Duration:** {1}"
+play_12 : "**📃 Playlist:** {0}\n**👤 Owner:** {1}\n**🎼 Tracks:** {2}"
+play_13 : "▶️ Now playing"
+play_14 : "▶️ Added to queue"
+play_15 : "**🎵 Title:** [{0}]({1})\n\n**🕒 Duration:** {2}\n**🎶 Requested by:** {3}"
+play_16 : "**📥 Downloading... Please wait.**"
+play_17 : "**📥 Downloaded.**"
+play_18 : "❌ Stream limit reached. Please try later."
+play_19 : "▶️ Resumed."
+play_20 : "Channel play is enabled. Channel: {0}"
+play_21 : "Channel play disabled."
+play_22 : "**Channel play mode**\n\nCurrent: {0}\n\nUse: `/channelplay <channel_id|disable>`"
+play_23 : "Please use yt-dlp supported URLs."
+play_24 : "**Limit:** Track duration must be smaller than {0} minutes."
+play_25 : "**Limit:** Single stream max file size is 1GB."
+play_26 : "Please provide a search query or a link."
+
+# Stream
+stream_1 : "**🎵 Now Playing:** {0}\n**🕒 Duration:** {1}\n**🎶 Requested by:** {2}\n[More info]({3})"
+stream_2 : "**Could not start the stream**"
+stream_3 : "**Resumed**"
+stream_4 : "**Paused**"
+stream_5 : "**Muted**"
+stream_6 : "**Unmuted**"
+stream_7 : "**Looping** {0} times"
+stream_8 : "**Loop disabled**"
+stream_9 : "**Skipped**"
+stream_10 : "**Stream ended**"
+
+# Settings
+setting_1 : "Choose a settings panel:"
+setting_2 : "📊 Settings updated."
+setting_3 : "Audio bitrate set to **{0}**."
+setting_4 : "Video bitrate set to **{0}**."
+setting_5 : "Playmode set to **{0}**."
+setting_6 : "Channel play set to **{0}**."
+
+# Maintenance
+maint_1 : "🛠️ Maintenance mode is **ON**. Please wait."
+maint_2 : "✅ Maintenance mode turned **OFF**."
+
+# Language
+lang_1 : "🌐 **Select a language:**"
+lang_2 : "✅ Language set to **{0}**."
+lang_3 : "🌐 Available languages: {0}"
+
+# Queue
+queue_1 : "**📜 Current Queue ({0} tracks):**"
+queue_2 : "Queue is empty."
+
+# Commands list
+cmd_1 : "📜 **Commands**\n\n/play, /vplay, /pause, /resume, /skip, /stop, /shuffle, /loop, /queue\n/song, /lyrics, /tts, /dl, /mp3, /reels\n/settings, /lang, /admincache\n/genstring, /setstring, /sessions (owner)"
