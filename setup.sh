@@ -240,6 +240,10 @@ STRING_LINE=$(prompt_var "STRING_SESSION" \
   "7) ${YELLOW}STRING_SESSION${NC} (opsiyonel) — Asistan hesabının Pyrogram string session. Boş bırakırsanız bot çalışır, sonradan PM'den /genstring komutuyla oluşturabilirsiniz." \
   "" "y")
 
+GH_TOKEN_LINE=$(prompt_var "GITHUB_TOKEN" \
+  "8) ${YELLOW}GITHUB_TOKEN${NC} (opsiyonel) — /update komutuyla bot içinden 'git pull' yapabilmek için. Boş bırakırsanız da bot çalışır." \
+  "" "y")
+
 cat > "$ENV_FILE" <<EOF
 ${API_ID_LINE}
 ${API_HASH_LINE}
@@ -249,6 +253,7 @@ ${LOG_GROUP_LINE}
 MUSIC_BOT_NAME=Melih Music Bot
 ${OWNER_ID_LINE}
 ${STRING_LINE}
+${GH_TOKEN_LINE}
 DURATION_LIMIT=60
 SONG_DOWNLOAD_DURATION_LIMIT=180
 VIDEO_STREAM_LIMIT=3
@@ -307,37 +312,97 @@ EOF
 
 systemctl daemon-reload
 systemctl enable musicbot >/dev/null
-log "Servis etkin. Başlatılıyor..."
-systemctl restart musicbot
-sleep 4
-
-if systemctl is-active --quiet musicbot; then
-  log "Bot servisi çalışıyor. 🎉"
-else
-  warn "Bot başlatıldı ama henüz aktif değil. Logları inceleyin:"
-  warn "  journalctl -u musicbot -n 50 --no-pager"
-fi
+log "Servis etkin (musicbot.service)."
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo "${GREEN}KURULUM TAMAM!${NC}"
+echo "  ${GREEN}KURULUM TAMAMLANDI 🎉${NC}"
+echo "════════════════════════════════════════════════════════════════"
 echo
-echo "  Logları izlemek:    journalctl -u musicbot -f"
-echo "  Yeniden başlat:     systemctl restart musicbot"
-echo "  Durdur:             systemctl stop musicbot"
-echo "  .env düzenle:       nano $ENV_FILE   (sonra restart)"
+echo "  ${YELLOW}Şimdi ne yapmak istersiniz?${NC}"
 echo
-echo "  Bot Telegram'da hazır → @botunuzun_kullanıcı_adı /start"
+echo "    ${GREEN}1)${NC} Botu tam başlat  (bot + asistan + sesli sohbet)"
+echo "    ${GREEN}2)${NC} Asistansız başlat  (sadece bot komutları, VC yok)"
+echo "    ${GREEN}3)${NC} Tüm dosyayı sil  (geri al, kurulumu tamamen kaldır)"
+echo "    ${GREEN}4)${NC} Şimdi başlatma  (manuel: systemctl start musicbot)"
 echo
-echo "  İlk açılış kontrol listesi:"
-echo "    ✓ Bot'u log grubuna (LOG_GROUP_ID) admin olarak ekleyin"
-echo "    ✓ Asistan (STRING_SESSION) hesabını log grubuna ekleyin"
+read -r -p "  Seçim [1/2/3/4] (Enter=1): " final_choice </dev/tty
+case "${final_choice:-1}" in
+  1)
+    log "Bot başlatılıyor (tam mod)..."
+    systemctl restart musicbot
+    sleep 5
+    if systemctl is-active --quiet musicbot; then
+      log "Bot çalışıyor 🎵"
+    else
+      warn "Bot start hatalı görünüyor. Log için:  journalctl -u musicbot -n 50"
+    fi
+    ;;
+  2)
+    log "Asistansız mod ayarlanıyor (STRING_SESSION boşaltılıyor)..."
+    sed -i 's|^STRING_SESSION=.*|STRING_SESSION=|' "$ENV_FILE"
+    systemctl restart musicbot
+    sleep 5
+    log "Bot asistansız modda çalıştı. Asistan eklemek için PM'de /genstring kullanın."
+    ;;
+  3)
+    warn "Tüm dosyalar silinecek!"
+    read -r -p "  Emin misiniz? (yazın: SIL) " confirm </dev/tty
+    if [[ "$confirm" == "SIL" ]]; then
+      log "Servis durduruluyor..."
+      systemctl stop musicbot 2>/dev/null || true
+      systemctl disable musicbot 2>/dev/null || true
+      rm -f /etc/systemd/system/musicbot.service
+      systemctl daemon-reload
+      log "Servis kaldırıldı."
+      log "Dosyalar siliniyor: $ROOT"
+      cd "$HOME"
+      rm -rf "$ROOT"
+      echo
+      log "Kurulum tamamen kaldırıldı. Hoşçakalın."
+      exit 0
+    else
+      warn "İptal edildi."
+      systemctl restart musicbot
+    fi
+    ;;
+  4)
+    log "Bot şimdi başlatılmadı. Manuel başlatma:  systemctl start musicbot"
+    ;;
+  *)
+    warn "Geçersiz seçim. Bot başlatılmadı."
+    ;;
+esac
+
+echo
+echo "════════════════════════════════════════════════════════════════"
+echo "  ${GREEN}YÖNETİM KOMUTLARI${NC}"
+echo "════════════════════════════════════════════════════════════════"
+echo "  ${YELLOW}Sistem (terminal):${NC}"
+echo "    journalctl -u musicbot -f       # canlı log"
+echo "    systemctl restart musicbot      # yeniden başlat"
+echo "    systemctl stop musicbot         # durdur"
+echo "    systemctl start musicbot        # başlat"
+echo "    systemctl status musicbot       # durum"
+echo "    nano $ENV_FILE                  # .env düzenle"
+echo
+echo "  ${YELLOW}Telegram (bot PM, sadece sahibi):${NC}"
+echo "    /env                            # .env'i görüntüle (gizli alanlar maskeli)"
+echo "    /setenv KEY DEĞER               # .env'de bir değeri değiştir"
+echo "    /unsetenv KEY                   # .env'den bir alan sil"
+echo "    /update                         # git pull + restart (GITHUB_TOKEN ile)"
+echo "    /restart                        # botu yeniden başlat"
+echo "    /genstring                      # asistan session üret"
+echo "    /setad <metin>                  # TTS sesli reklam"
+echo "    /setadfile                      # audio'ya reply, set"
+echo "    /adon /adoff /adstatus          # reklam yönetimi"
+echo "    /lasterror                      # son hata tracebackleri"
+echo "    /logs                           # son log satırları"
+echo
+echo "  ${YELLOW}İlk açılış kontrol listesi:${NC}"
+echo "    ✓ Bot'u log grubuna admin olarak ekleyin"
+echo "    ✓ Asistan hesabını log grubuna ekleyin"
 echo "    ✓ Müzik çalacağınız her gruba bot+asistanı ekleyin"
 echo "    ✓ Bot'u admin yapın (asistan davet edebilsin)"
-echo
-echo "  Reklam ayarlamak (PM):"
-echo "    /setad <metin>      → TTS sesli reklam"
-echo "    /setadfile          → audio dosyaya reply, set"
-echo "    /adstatus           → durum"
-echo "    /adon /adoff        → aç/kapa"
+echo "    ✓ Grupta voice chat başlatın, sonra /play deneyin"
 echo "════════════════════════════════════════════════════════════════"
