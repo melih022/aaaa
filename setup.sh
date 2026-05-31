@@ -21,6 +21,34 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 # ────────────────────────────────────────────────────────────────────────
+# Banner
+# ────────────────────────────────────────────────────────────────────────
+clear
+cat <<BANNER
+${GREEN}
+ ╔══════════════════════════════════════════════════════════════╗
+ ║                                                              ║
+ ║          ${YELLOW}🎵  GOOGLE MUSİC  🎵${GREEN}                            ║
+ ║                                                              ║
+ ║          ${YELLOW}EGOİST KOMUTAN  •  DEVELOPER${GREEN}                    ║
+ ║                                                              ║
+ ║          ${NC}Telegram Voice-Chat Music Bot${GREEN}                   ║
+ ║          ${NC}One-shot installer  •  v2026${GREEN}                    ║
+ ║                                                              ║
+ ╚══════════════════════════════════════════════════════════════╝
+${NC}
+BANNER
+sleep 1
+
+# ────────────────────────────────────────────────────────────────────────
+# Clean up stale repo files from previous failed runs
+# (older noble/7.0 entries break apt-get update)
+# ────────────────────────────────────────────────────────────────────────
+log "Eski yarım kurulum izleri temizleniyor..."
+rm -f /etc/apt/sources.list.d/mongodb-org-*.list 2>/dev/null
+rm -f /usr/share/keyrings/mongodb-server-*.gpg 2>/dev/null
+
+# ────────────────────────────────────────────────────────────────────────
 # 1) System packages
 # ────────────────────────────────────────────────────────────────────────
 log "Apt güncelleniyor..."
