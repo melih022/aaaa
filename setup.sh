@@ -32,27 +32,45 @@ apt-get install -y ffmpeg python3 python3-pip python3-venv git curl gnupg wget c
 # MongoDB (only if not installed)
 if ! command -v mongod >/dev/null 2>&1; then
   log "MongoDB kuruluyor (yerel, dış erişimsiz)..."
-  curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg --yes -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor 2>/dev/null || true
   CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-jammy}")
   DISTRO_ID=$(. /etc/os-release && echo "${ID:-ubuntu}")
+
+  # MongoDB version selection: 8.0 (supports Ubuntu 24.04 noble),
+  # fall back to 7.0 for older distros.
+  case "$CODENAME" in
+    noble|trixie)  MONGO_VER="8.0" ;;
+    jammy|focal|bookworm|bullseye)  MONGO_VER="7.0" ;;
+    *)  MONGO_VER="7.0" ;;
+  esac
+
+  curl -fsSL "https://www.mongodb.org/static/pgp/server-${MONGO_VER}.asc" \
+    | gpg --yes -o "/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg" --dearmor 2>/dev/null || true
+
   if [[ "$DISTRO_ID" == "debian" ]]; then
-    echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/debian ${CODENAME}/mongodb-org/7.0 main" \
-      > /etc/apt/sources.list.d/mongodb-org-7.0.list
+    echo "deb [signed-by=/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg] https://repo.mongodb.org/apt/debian ${CODENAME}/mongodb-org/${MONGO_VER} main" \
+      > "/etc/apt/sources.list.d/mongodb-org-${MONGO_VER}.list"
   else
-    echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu ${CODENAME}/mongodb-org/7.0 multiverse" \
-      > /etc/apt/sources.list.d/mongodb-org-7.0.list
+    echo "deb [signed-by=/usr/share/keyrings/mongodb-server-${MONGO_VER}.gpg] https://repo.mongodb.org/apt/ubuntu ${CODENAME}/mongodb-org/${MONGO_VER} multiverse" \
+      > "/etc/apt/sources.list.d/mongodb-org-${MONGO_VER}.list"
   fi
-  apt-get update -y >/dev/null
+
+  apt-get update -y >/dev/null 2>&1 || warn "Bazı repolar güncellenemedi (önemsiz)"
+
   if apt-get install -y mongodb-org >/dev/null 2>&1; then
     systemctl enable --now mongod
+    log "MongoDB ${MONGO_VER} kuruldu ve başlatıldı."
   else
-    warn "MongoDB 7.0 paketi bulunamadı. Genel mongodb deneniyor..."
-    apt-get install -y mongodb >/dev/null 2>&1 || warn "MongoDB kurulamadı, manuel kurulum gerekebilir."
-    systemctl enable --now mongodb 2>/dev/null || systemctl enable --now mongod 2>/dev/null || true
+    # Fallback: try mongodb-community-server (newer naming)
+    warn "mongodb-org paketi bulunamadı, alternatif deneniyor..."
+    apt-get install -y mongodb >/dev/null 2>&1 \
+      && systemctl enable --now mongodb 2>/dev/null \
+      && systemctl enable --now mongod 2>/dev/null \
+      || warn "MongoDB kurulamadı! Manuel kurun: docs.mongodb.com/manual/installation"
   fi
 else
   log "MongoDB zaten kurulu."
-  systemctl is-active --quiet mongod || systemctl start mongod 2>/dev/null || true
+  systemctl is-active --quiet mongod || systemctl start mongod 2>/dev/null \
+    || systemctl start mongodb 2>/dev/null || true
 fi
 
 # ────────────────────────────────────────────────────────────────────────
