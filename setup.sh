@@ -29,14 +29,34 @@ apt-get update -y >/dev/null
 log "Bağımlılıklar kuruluyor (ffmpeg, python3, git, curl, gnupg)..."
 apt-get install -y ffmpeg python3 python3-pip python3-venv git curl gnupg wget ca-certificates >/dev/null
 
-# MongoDB (only if not installed)
-if ! command -v mongod >/dev/null 2>&1; then
+# ────────────────────────────────────────────────────────────────────────
+# MongoDB — local install only if user wants it (default behavior).
+# If the user has an Atlas / external MongoDB URI, they can enter it later
+# in the .env prompts and we skip local installation entirely.
+# ────────────────────────────────────────────────────────────────────────
+INSTALL_LOCAL_MONGO=""
+EXISTING_MONGO_URI=$(grep -E "^MONGO_DB_URI=" "$ROOT/.env" 2>/dev/null | head -1 | sed 's/^MONGO_DB_URI=//')
+if [[ -n "$EXISTING_MONGO_URI" && "$EXISTING_MONGO_URI" != "mongodb://localhost:27017" ]]; then
+  log "Mevcut external MongoDB URI tespit edildi (Atlas/uzak). Yerel kurulum atlanıyor."
+  INSTALL_LOCAL_MONGO="no"
+else
+  echo
+  echo "${YELLOW}MongoDB seçimi:${NC}"
+  echo "  1) Yerel MongoDB kur (varsayılan, VPS'inize kurulur)"
+  echo "  2) Uzak MongoDB kullan (Atlas, mongodb+srv://... gibi). Şu an kurulum atlanır,"
+  echo "     URI'yi az sonra .env adımında girersiniz."
+  read -r -p "Seçiminiz [1/2] (Enter=1): " mongo_choice </dev/tty
+  if [[ "$mongo_choice" == "2" ]]; then
+    INSTALL_LOCAL_MONGO="no"
+  else
+    INSTALL_LOCAL_MONGO="yes"
+  fi
+fi
+
+if [[ "$INSTALL_LOCAL_MONGO" == "yes" ]] && ! command -v mongod >/dev/null 2>&1; then
   log "MongoDB kuruluyor (yerel, dış erişimsiz)..."
   CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-jammy}")
   DISTRO_ID=$(. /etc/os-release && echo "${ID:-ubuntu}")
-
-  # MongoDB version selection: 8.0 (supports Ubuntu 24.04 noble),
-  # fall back to 7.0 for older distros.
   case "$CODENAME" in
     noble|trixie)  MONGO_VER="8.0" ;;
     jammy|focal|bookworm|bullseye)  MONGO_VER="7.0" ;;
@@ -54,20 +74,15 @@ if ! command -v mongod >/dev/null 2>&1; then
       > "/etc/apt/sources.list.d/mongodb-org-${MONGO_VER}.list"
   fi
 
-  apt-get update -y >/dev/null 2>&1 || warn "Bazı repolar güncellenemedi (önemsiz)"
-
+  apt-get update -y >/dev/null 2>&1 || warn "Bazı repolar güncellenemedi"
   if apt-get install -y mongodb-org >/dev/null 2>&1; then
     systemctl enable --now mongod
     log "MongoDB ${MONGO_VER} kuruldu ve başlatıldı."
   else
-    # Fallback: try mongodb-community-server (newer naming)
-    warn "mongodb-org paketi bulunamadı, alternatif deneniyor..."
-    apt-get install -y mongodb >/dev/null 2>&1 \
-      && systemctl enable --now mongodb 2>/dev/null \
-      && systemctl enable --now mongod 2>/dev/null \
-      || warn "MongoDB kurulamadı! Manuel kurun: docs.mongodb.com/manual/installation"
+    warn "MongoDB kurulamadı. Uzak MongoDB (Atlas) kullanmayı düşünün."
+    warn "https://cloud.mongodb.com adresinden ücretsiz cluster oluşturabilirsiniz."
   fi
-else
+elif [[ "$INSTALL_LOCAL_MONGO" == "yes" ]]; then
   log "MongoDB zaten kurulu."
   systemctl is-active --quiet mongod || systemctl start mongod 2>/dev/null \
     || systemctl start mongodb 2>/dev/null || true
@@ -170,13 +185,16 @@ API_HASH_LINE=$(prompt_var "API_HASH" "2) Telegram API_HASH (aynı yerden)" "" "
 BOT_TOKEN_LINE=$(prompt_var "BOT_TOKEN" "3) Bot Token (@BotFather → /newbot veya /token)" "" "y")
 OWNER_ID_LINE=$(prompt_var "OWNER_ID" "4) Sahibinin Telegram User ID (@userinfobot ile öğren)" "" "n")
 LOG_GROUP_LINE=$(prompt_var "LOG_GROUP_ID" "5) Log Grup ID (botu ve asistanı admin yapın). Yoksa 0 girin" "0" "n")
-STRING_LINE=$(prompt_var "STRING_SESSION" "6) (Opsiyonel) Asistan STRING_SESSION. Boş bırakırsanız bot çalışır, /genstring ile sonra ekleyebilirsiniz" "" "y")
+MONGO_DEFAULT="mongodb://localhost:27017"
+[[ "$INSTALL_LOCAL_MONGO" == "no" ]] && MONGO_DEFAULT=""
+MONGO_LINE=$(prompt_var "MONGO_DB_URI" "6) MongoDB URI. Yerel kurduysanız Enter; Atlas/uzak için mongodb+srv://... yapıştırın" "$MONGO_DEFAULT" "y")
+STRING_LINE=$(prompt_var "STRING_SESSION" "7) (Opsiyonel) Asistan STRING_SESSION. Boş bırakırsanız bot çalışır, /genstring ile sonra ekleyebilirsiniz" "" "y")
 
 cat > "$ENV_FILE" <<EOF
 ${API_ID_LINE}
 ${API_HASH_LINE}
 ${BOT_TOKEN_LINE}
-MONGO_DB_URI=mongodb://localhost:27017
+${MONGO_LINE}
 ${LOG_GROUP_LINE}
 MUSIC_BOT_NAME=Melih Music Bot
 ${OWNER_ID_LINE}
