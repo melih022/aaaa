@@ -41,6 +41,91 @@ BANNER
 sleep 1
 
 # ────────────────────────────────────────────────────────────────────────
+# Startup menu — if the bot is already installed, offer quick actions
+# instead of forcing a full re-install every time.
+# ────────────────────────────────────────────────────────────────────────
+INSTALLED="no"
+if [[ -f "$ROOT/.env" && -d "$ROOT/venv" ]]; then
+  INSTALLED="yes"
+fi
+
+if [[ "$INSTALLED" == "yes" ]]; then
+  echo
+  echo "════════════════════════════════════════════════════════════════"
+  echo "  ${GREEN}Mevcut kurulum tespit edildi.${NC}"
+  echo "════════════════════════════════════════════════════════════════"
+  if systemctl is-active --quiet musicbot 2>/dev/null; then
+    echo "  ${GREEN}● Servis durumu: ÇALIŞIYOR${NC}"
+  else
+    echo "  ${YELLOW}● Servis durumu: durduruldu / yok${NC}"
+  fi
+  echo
+  echo "  ${YELLOW}Ne yapmak istersiniz?${NC}"
+  echo
+  echo "    ${GREEN}1)${NC} Botu başlat / yeniden başlat"
+  echo "    ${GREEN}2)${NC} Yeniden kurulum yap (kod güncelle + bağımlılıklar + .env)"
+  echo "    ${GREEN}3)${NC} Botu durdur"
+  echo "    ${GREEN}4)${NC} Canlı log göster (Ctrl+C ile çık)"
+  echo "    ${GREEN}5)${NC} Tüm dosyaları sil (kurulumu kaldır)"
+  echo "    ${GREEN}6)${NC} Çık"
+  echo
+  read -r -p "  Seçim [1-6] (Enter=1): " start_choice </dev/tty
+  case "${start_choice:-1}" in
+    1)
+      log "Bot başlatılıyor..."
+      systemctl restart musicbot
+      sleep 3
+      if systemctl is-active --quiet musicbot; then
+        log "Bot çalışıyor 🎵"
+        echo
+        echo "Canlı log için:  journalctl -u musicbot -f"
+      else
+        warn "Bot başlatılamadı. Log:  journalctl -u musicbot -n 50"
+      fi
+      exit 0
+      ;;
+    2)
+      log "Yeniden kurulum yapılacak. .env değerleri korunacak (Enter ile geçilebilir)."
+      ;;
+    3)
+      log "Bot durduruluyor (auto-restart kapalı)..."
+      systemctl stop musicbot
+      log "Bot durduruldu. Tekrar başlatmak için:  systemctl start musicbot"
+      exit 0
+      ;;
+    4)
+      log "Canlı log gösteriliyor. Ctrl+C ile çık."
+      exec journalctl -u musicbot -f
+      ;;
+    5)
+      warn "Tüm dosyalar silinecek!"
+      read -r -p "  Emin misiniz? (yazın: SIL) " confirm </dev/tty
+      if [[ "$confirm" == "SIL" ]]; then
+        systemctl stop musicbot 2>/dev/null || true
+        systemctl disable musicbot 2>/dev/null || true
+        rm -f /etc/systemd/system/musicbot.service
+        systemctl daemon-reload
+        log "Servis kaldırıldı."
+        log "Dosyalar siliniyor: $ROOT"
+        cd "$HOME"
+        rm -rf "$ROOT"
+        log "Kurulum tamamen kaldırıldı."
+      else
+        warn "İptal edildi."
+      fi
+      exit 0
+      ;;
+    6)
+      log "Çıkılıyor."
+      exit 0
+      ;;
+    *)
+      warn "Geçersiz seçim, yeniden kurulum yapılacak."
+      ;;
+  esac
+fi
+
+# ────────────────────────────────────────────────────────────────────────
 # Clean up stale repo files from previous failed runs
 # (older noble/7.0 entries break apt-get update)
 # ────────────────────────────────────────────────────────────────────────
@@ -390,8 +475,9 @@ echo "  ${YELLOW}Telegram (bot PM, sadece sahibi):${NC}"
 echo "    /env                            # .env'i görüntüle (gizli alanlar maskeli)"
 echo "    /setenv KEY DEĞER               # .env'de bir değeri değiştir"
 echo "    /unsetenv KEY                   # .env'den bir alan sil"
-echo "    /update                         # git pull + restart (GITHUB_TOKEN ile)"
+echo "    /update                         # git fetch+reset + restart (GITHUB_TOKEN ile)"
 echo "    /restart                        # botu yeniden başlat"
+echo "    /stop                           # botu tamamen durdur (auto-restart kapalı)"
 echo "    /genstring                      # asistan session üret"
 echo "    /setad <metin>                  # TTS sesli reklam"
 echo "    /setadfile                      # audio'ya reply, set"

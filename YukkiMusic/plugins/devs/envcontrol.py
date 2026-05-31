@@ -1,23 +1,27 @@
 #
-# Owner-only .env / update controller.
+# Owner-only .env / update / lifecycle controller.
 #
 # Commands:
 #   /getenv               — list .env keys with masked values
 #   /env                  — alias of /getenv
 #   /setenv KEY VALUE     — change a value (writes .env on disk)
 #   /unsetenv KEY         — remove a key from .env
-#   /update               — git pull origin master (uses GITHUB_TOKEN if set)
+#   /update               — git fetch + reset --hard origin/<branch> + pip install
+#   /stop                 — stop the bot via systemd (no auto-restart)
+#   /shutdown             — alias of /stop
 #
 
 import os
 import re
+import sys
+import shlex
 import asyncio
 import subprocess
 
 from pyrogram import filters
 from pyrogram.types import Message
 
-from YukkiMusic import app
+from YukkiMusic import app, LOGGER
 from YukkiMusic.misc import SUDOERS
 
 
@@ -158,44 +162,145 @@ async def cmd_unsetenv(client, message: Message):
 
 @app.on_message(filters.command(["update"]) & sudo_filter & filters.private)
 async def cmd_update(client, message: Message):
-    """Git pull + smart restart. Uses GITHUB_TOKEN from .env if present
-    (for private repos or rate-limit avoidance)."""
-    status = await message.reply_text("⬇️ Güncelleme aranıyor (git pull)…")
+    """Robust git update:
+       1. Detect current branch (master/main/...)
+       2. git fetch origin <branch> (with GITHUB_TOKEN if set, for private repos)
+       3. git reset --hard origin/<branch>  (force-sync, no merge conflicts)
+       4. pip install -r requirements.txt (if changed)
+       5. restart via os.execv (systemd keeps PID alive)
+    """
+    status = await message.reply_text("⬇️ Güncelleme başlıyor…")
+    cwd = os.getcwd()
     env_vars = _read_env()
     token = env_vars.get("GITHUB_TOKEN", "").strip()
 
-    # Construct remote URL with token if present
-    proc = await asyncio.create_subprocess_exec(
-        "git", "remote", "get-url", "origin",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, _ = await proc.communicate()
-    remote = out.decode().strip()
-
-    pull_url = remote
-    if token and remote.startswith("https://") and "@" not in remote.split("//", 1)[1]:
-        # inject token
-        pull_url = remote.replace("https://", f"https://x-access-token:{token}@", 1)
-
-    # git pull with optional credential
-    proc = await asyncio.create_subprocess_exec(
-        "git", "pull", pull_url,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    output = (out.decode() + err.decode()).strip()
-    if "Already up to date" in output or "Already up-to-date" in output:
-        return await status.edit_text("✅ Zaten en güncel sürüm.")
-    if proc.returncode != 0:
-        return await status.edit_text(
-            f"❌ Güncelleme hatası:\n```\n{output[-1500:]}\n```"
+    async def run(*cmd, **kw):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            **kw,
         )
+        out, err = await proc.communicate()
+        return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
+
+    # 0) Are we inside a git repo?
+    rc, out, err = await run("git", "rev-parse", "--is-inside-work-tree")
+    if rc != 0 or "true" not in out:
+        return await status.edit_text(
+            "❌ Bu klasör bir git deposu değil. Otomatik güncelleme "
+            "yapılamıyor.\n\n"
+            f"`{cwd}`\n\n"
+            "VPS'te terminalden: `cd <kurulum>` → `git pull` → "
+            "`systemctl restart musicbot`"
+        )
+
+    # 1) Detect branch
+    rc, out, err = await run("git", "rev-parse", "--abbrev-ref", "HEAD")
+    branch = (out.strip() if rc == 0 else "") or "master"
+
+    # 2) Remote URL (inject token if private/rate-limit)
+    rc, out, err = await run("git", "remote", "get-url", "origin")
+    remote = out.strip()
+    if not remote:
+        return await status.edit_text("❌ `origin` remote tanımlı değil.")
+
+    fetch_url = remote
+    if token and remote.startswith("https://") and "@" not in remote.split("//", 1)[1]:
+        fetch_url = remote.replace(
+            "https://", f"https://x-access-token:{token}@", 1
+        )
+
+    await status.edit_text(f"⬇️ `git fetch origin {branch}` …")
+    rc, out, err = await run("git", "fetch", fetch_url, branch)
+    if rc != 0:
+        # Sanitize token from error message before showing to user
+        sanitized = (out + err).replace(token, "***") if token else (out + err)
+        return await status.edit_text(
+            f"❌ git fetch hatası:\n```\n{sanitized[-1500:]}\n```"
+        )
+
+    # 3) Check if anything new
+    rc, out, err = await run(
+        "git", "rev-list", "--count", "HEAD..FETCH_HEAD"
+    )
+    new_commits = (out.strip() if rc == 0 else "0") or "0"
+    if new_commits == "0":
+        return await status.edit_text("✅ Zaten en güncel sürüm.")
+
     await status.edit_text(
-        f"✅ **Güncellendi.**\n```\n{output[-1500:]}\n```\n\nBot yeniden başlatılıyor…"
+        f"⬇️ {new_commits} yeni commit bulundu. Senkronize ediliyor…"
+    )
+
+    # 4) Hard reset
+    rc, out, err = await run("git", "reset", "--hard", "FETCH_HEAD")
+    if rc != 0:
+        return await status.edit_text(
+            f"❌ git reset hatası:\n```\n{(out + err)[-1500:]}\n```"
+        )
+
+    # 5) pip install (only if requirements.txt changed in last pull)
+    rc, out, _ = await run(
+        "git", "diff", "HEAD@{1}", "HEAD", "--name-only"
+    )
+    changed_files = out.split() if rc == 0 else []
+    pip_msg = ""
+    if "requirements.txt" in changed_files:
+        await status.edit_text("📦 requirements.txt değişti, pip install yapılıyor…")
+        pip = os.path.join(cwd, "venv", "bin", "pip")
+        if not os.path.isfile(pip):
+            pip = sys.executable.replace("python", "pip")
+        rc, out, err = await run(pip, "install", "-r", "requirements.txt", "--quiet")
+        if rc != 0:
+            pip_msg = f"\n⚠️ pip install başarısız (ama kod güncellendi):\n```\n{(out+err)[-800:]}\n```"
+        else:
+            pip_msg = "\n📦 Bağımlılıklar güncellendi."
+
+    # 6) Show summary
+    rc, summary, _ = await run("git", "log", "-3", "--oneline", "--no-decorate")
+    await status.edit_text(
+        f"✅ **Güncellendi** ({new_commits} commit, branch=`{branch}`)\n"
+        f"```\n{summary.strip()[:1500]}\n```{pip_msg}\n\n"
+        f"♻️ Bot yeniden başlatılıyor…"
     )
     await asyncio.sleep(2)
-    # Trigger /restart
     from YukkiMusic.plugins.devs.sessionmgr import _restart_self
     await _restart_self()
+
+
+# ---------- /stop : full shutdown (no auto-restart) ----------
+
+@app.on_message(filters.command(["stop", "shutdown"]) & sudo_filter & filters.private)
+async def cmd_stop(client, message: Message):
+    """Stop the bot completely. Tries `systemctl stop musicbot` first
+    (so systemd doesn't auto-restart). Falls back to a plain exit, which
+    will trigger systemd's Restart=always — in that case, the user is told
+    to use `systemctl stop musicbot` from the terminal.
+    """
+    await message.reply_text(
+        "🛑 **Bot durduruluyor…**\n\n"
+        "Auto-restart devre dışı bırakılıyor. Bu mesajdan sonra bot offline kalır.\n"
+        "Tekrar başlatmak için VPS terminalinde: `systemctl start musicbot`"
+    )
+    await asyncio.sleep(1)
+    LOGGER("YukkiMusic").warning("⛔ /stop received from owner — shutting down.")
+
+    # Detached systemctl stop so it survives our own death
+    try:
+        subprocess.Popen(
+            ["systemctl", "stop", "musicbot"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        LOGGER("YukkiMusic").error(f"systemctl stop failed: {e}")
+
+    # Give systemd a moment, then exit ourselves anyway
+    await asyncio.sleep(2)
+    try:
+        await app.stop()
+    except Exception:
+        pass
+    os._exit(0)
