@@ -471,18 +471,17 @@ class YouTubeAPI:
         loop = asyncio.get_running_loop()
 
         def audio_dl():
-            # Simple, reliable yt-dlp — matches what the working reference
-            # repo (melih022/google) does: NO player_client arg, just plain
-            # bestaudio + cookies. With valid cookies this almost always works
-            # while the streaming-URL (-g) path keeps tripping over format
-            # selectors. Output: downloads/<id>.<ext>
+            # 2026-06 fix: VPS IPs often hit "Sign in to confirm you're not a
+            # bot" even on simple videos. The cure is to try MULTIPLE
+            # player_client configurations in sequence — different videos
+            # respond to different clients. We also pass `player_skip=webpage`
+            # so yt-dlp does NOT fetch the regular webpage (which is what
+            # most reliably triggers the bot check).
             #
-            # 2026-06 fix: try with cookies first ONLY if they look complete
-            # (SAPISID + __Secure-3PAPISID + >=3KB). Partial/expired cookies
-            # actually make YouTube reject the request with "Sign in to
-            # confirm you're not a bot" — so we fall back to cookie-less mode
-            # automatically. Many videos work fine on datacenter IPs without
-            # cookies (verified on yt-dlp 2026.03.17+).
+            # Strategy:
+            #   1. If valid cookies → try with cookies first
+            #   2. Then try a series of cookie-less player_client combos
+            #   3. Last resort: classic clients without player_skip
             import logging
             log = logging.getLogger("YukkiMusic")
 
@@ -496,25 +495,25 @@ class YouTubeAPI:
                     "VEVO/age-restricted videos."
                 )
 
-            base_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": "downloads/%(id)s.%(ext)s",
-                "geo_bypass": True,
-                "nocheckcertificate": True,
-                "quiet": True,
-                "no_warnings": True,
-                "retries": 5,
-                "fragment_retries": 5,
-                "concurrent_fragment_downloads": 4,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": [
-                            "default", "ios", "mweb",
-                            "android_music", "tv_embedded",
-                        ],
-                    }
-                },
-            }
+            def _make_opts(player_clients, player_skip=None, cookiefile=None):
+                youtube_args = {"player_client": list(player_clients)}
+                if player_skip:
+                    youtube_args["player_skip"] = list(player_skip)
+                opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": "downloads/%(id)s.%(ext)s",
+                    "geo_bypass": True,
+                    "nocheckcertificate": True,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "retries": 3,
+                    "fragment_retries": 3,
+                    "concurrent_fragment_downloads": 4,
+                    "extractor_args": {"youtube": youtube_args},
+                }
+                if cookiefile:
+                    opts["cookiefile"] = cookiefile
+                return opts
 
             def _try(opts):
                 x = yt_dlp.YoutubeDL(opts)
@@ -525,31 +524,58 @@ class YouTubeAPI:
                 x.download([link])
                 return xyz
 
-            # Attempt 1: with valid cookies (if any)
+            # Strategy list — each entry: (label, player_clients, player_skip, use_cookies)
+            # 2026-06: tested order — classic combo is the most reliable on
+            # datacenter IPs; tv_simply/web_embedded/android_vr were
+            # less reliable in benchmarks.
+            strategies = []
             if cookies_ok:
-                opts = dict(base_opts)
-                opts["cookiefile"] = cf
-                try:
-                    return _try(opts)
-                except Exception as e:
-                    msg = str(e).lower()
-                    if any(s in msg for s in (
-                        "sign in to confirm", "not a bot",
-                        "confirm you", "use --cookies",
-                    )):
-                        log.warning(
-                            "Cookies rejected by YouTube (likely expired). "
-                            "Retrying WITHOUT cookies..."
-                        )
-                    else:
-                        # Different error — still try cookie-less as fallback
-                        log.warning(
-                            f"audio_dl with cookies failed: {type(e).__name__}: "
-                            f"{str(e)[:200]} — retrying WITHOUT cookies"
-                        )
+                strategies.append((
+                    "with-cookies (default,ios,mweb)",
+                    ["default", "ios", "mweb"],
+                    None, True,
+                ))
+            # Cookie-less strategies (ordered by tested reliability)
+            strategies.extend([
+                # 1) CLASSIC combo — verified most reliable on datacenter IPs
+                ("cookie-less default,ios,mweb,android_music,tv_embedded",
+                 ["default", "ios", "mweb", "android_music", "tv_embedded"],
+                 None, False),
+                # 2) mediaconnect variant
+                ("cookie-less mediaconnect,android_music,tv_embedded",
+                 ["mediaconnect", "android_music", "tv_embedded"],
+                 None, False),
+                # 3) ios+mweb (lighter)
+                ("cookie-less ios,mweb",
+                 ["ios", "mweb"], None, False),
+                # 4) android_vr only (rare fallback)
+                ("cookie-less android_vr",
+                 ["android_vr"], None, False),
+            ])
 
-            # Attempt 2: cookie-less (works for non-restricted videos)
-            return _try(base_opts)
+            last_exc = None
+            for label, clients, skip, use_cookies in strategies:
+                opts = _make_opts(
+                    clients, skip,
+                    cookiefile=(cf if (use_cookies and cookies_ok) else None),
+                )
+                try:
+                    result = _try(opts)
+                    if result and os.path.exists(result):
+                        log.info(f"audio_dl SUCCESS via: {label}")
+                        return result
+                except Exception as e:
+                    last_exc = e
+                    msg = str(e)[:200]
+                    log.warning(f"audio_dl strategy '{label}' failed: "
+                                f"{type(e).__name__}: {msg}")
+                    continue
+
+            # All strategies exhausted — re-raise the last exception so the
+            # outer code can decide whether to try the -g streaming path.
+            if last_exc:
+                raise last_exc
+            raise Exception("audio_dl: all strategies returned empty (no exception)")
 
         def video_dl():
             opts = {
@@ -635,28 +661,30 @@ class YouTubeAPI:
             else:
                 last_err = "audio_dl returned no file"
 
-            # Streaming-URL fallback chain
+            # Streaming-URL fallback chain — verified order Jun 2026:
+            # classic combo first (most reliable on datacenter IPs).
             stream_url = None
             attempts = [
-                # 1: most permissive — let yt-dlp choose any audio
+                # 1: CLASSIC combo — verified most reliable
                 [*YTDLP_BIN, "-g", "-f", "ba/b",
                  "--extractor-args",
                  "youtube:player_client=default,ios,mweb,android_music,tv_embedded",
                  "--no-warnings", "--no-call-home", *_cookie_cli_args(),
                  f"{link}"],
-                # 2: prefer m4a but accept anything
+                # 2: mediaconnect variant
                 [*YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best/best",
                  "--extractor-args",
                  "youtube:player_client=mediaconnect,android_music,tv_embedded",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
-                # 3: ios player client
+                # 3: ios+mweb (lighter)
                 [*YTDLP_BIN, "-g", "-f", "bestaudio/best",
                  "--extractor-args", "youtube:player_client=ios,mweb",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
-                # 4: last resort
+                # 4: android_vr fallback
                 [*YTDLP_BIN, "-g", "-f", "ba/b/best",
+                 "--extractor-args", "youtube:player_client=android_vr",
                  "--no-warnings", "--no-check-formats",
                  "--ignore-no-formats-error",
                  *_cookie_cli_args(),

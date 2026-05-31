@@ -107,6 +107,12 @@ case "${start_choice:-}" in
     if [[ -d "$ROOT/venv" && -f "$ROOT/requirements.txt" ]]; then
       log "Python bağımlılıkları güncelleniyor..."
       "$ROOT/venv/bin/pip" install -r "$ROOT/requirements.txt" --quiet || warn "pip uyarı verdi (devam)."
+      # Force-upgrade yt-dlp + curl-cffi (bot-check bypass) — pip would
+      # otherwise keep an older satisfying version.
+      log "yt-dlp ve curl-cffi (TLS impersonation) güncelleniyor..."
+      "$ROOT/venv/bin/pip" install --upgrade --quiet "yt-dlp[default,curl-cffi]>=2026.3.17" 2>/dev/null \
+        || "$ROOT/venv/bin/pip" install --upgrade --quiet "yt-dlp>=2026.3.17" "curl-cffi"
+      log "yt-dlp: $("$ROOT/venv/bin/python3" -c 'import yt_dlp; print(yt_dlp.version.__version__)' 2>/dev/null || echo 'unknown')"
     fi
     if systemctl is-active --quiet musicbot 2>/dev/null; then
       log "Bot yeniden başlatılıyor..."
@@ -262,7 +268,15 @@ pip install -r requirements.txt >/dev/null
 # kurigram patch (kurigram pyrogram namespace'ine kurulur; yan-pyrogram olursa kaldır)
 pip uninstall -y pyrogram >/dev/null 2>&1 || true
 pip install --force-reinstall "kurigram>=2.2.23" --no-deps >/dev/null
-pip install --upgrade "py-tgcalls>=2.2.12" "yt-dlp>=2026.3.17" "lyricsgenius" >/dev/null
+pip install --upgrade "py-tgcalls>=2.2.12" "lyricsgenius" >/dev/null
+
+# Always install LATEST yt-dlp + curl-cffi for TLS impersonation (key bypass
+# technique 2026 — makes requests look like real browsers, avoids many
+# "Sign in to confirm you're not a bot" challenges on datacenter IPs).
+log "yt-dlp güncel sürüm + curl-cffi (browser impersonation) kuruluyor..."
+pip install --upgrade --quiet "yt-dlp[default,curl-cffi]>=2026.3.17" || \
+  pip install --upgrade --quiet "yt-dlp>=2026.3.17" "curl-cffi" || \
+  warn "curl-cffi opsiyoneldir, yt-dlp tek başına da çalışır."
 
 # Verify yt-dlp Python module is importable (we now invoke it as `python -m yt_dlp`,
 # not via the CLI script, so PATH issues no longer matter).
@@ -271,6 +285,11 @@ if ! python3 -c "import yt_dlp" 2>/dev/null; then
   exit 1
 fi
 log "yt-dlp Python modülü doğrulandı: $(python3 -c 'import yt_dlp; print(yt_dlp.version.__version__)')"
+if python3 -c "import curl_cffi" 2>/dev/null; then
+  log "curl-cffi: ✅ aktif (browser TLS fingerprint impersonation)"
+else
+  warn "curl-cffi: yüklü değil (yt-dlp yine çalışır, ama bot-check'leri daha sık görebilirsiniz)"
+fi
 
 # pyrogram.emoji stub (pykeyboard'un bayrak emojileri için gerekli)
 PY_EMOJI=$(python3 - <<'PYEOF'
