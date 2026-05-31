@@ -10,3 +10,11 @@
 from .assistantdatabase import *
 from .memorydatabase import *
 from .mongodatabase import *
+from .addatabase import (
+    get_ad_config,
+    set_ad_text,
+    set_ad_audio,
+    clear_ad,
+    set_ad_enabled,
+    prepare_ad_file,
+)

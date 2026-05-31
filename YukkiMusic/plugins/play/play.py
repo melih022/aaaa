@@ -42,7 +42,8 @@ PLAY_COMMAND = get_command("PLAY_COMMAND")
 async def _safe_reply_photo(message, photo, caption, reply_markup=None):
     """Reply with a photo, gracefully fall back to text if Telegram rejects the URL."""
     try:
-        return await _safe_reply_photo(message, photo=photo, caption=caption, reply_markup=reply_markup
+        return await message.reply_photo(
+            photo=photo, caption=caption, reply_markup=reply_markup
         )
     except Exception:
         # Telegram couldn't fetch the external URL or invalid; reply with text instead

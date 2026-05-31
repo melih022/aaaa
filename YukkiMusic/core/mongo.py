@@ -1,35 +1,21 @@
+#
+# Mongo: tolerant init. Use MONGO_DB_URI from config; no remote fallback secrets.
+#
 
 from motor.motor_asyncio import AsyncIOMotorClient as _mongo_client_
 from pymongo import MongoClient
-from pyrogram import Client
 
 import config
 
 from ..logging import LOGGER
 
-TEMP_MONGODB = "mongodb+srv://melih:canmelih@melih.zdnmebb.mongodb.net/?retryWrites=true&w=majority&appName=Melih"
+_uri = config.MONGO_DB_URI or "mongodb://localhost:27017"
 
+LOGGER(__name__).info(f"Connecting MongoDB: {_uri.split('@')[-1]}")
 
-if config.MONGO_DB_URI is None:
-    LOGGER(__name__).warning(
-        "No MONGO DB URL found.. Your Bot will work on Yukki's Database"
-    )
-    temp_client = Client(
-        name="Yukki",
-        api_id=config.API_ID,
-        api_hash=config.API_HASH,
-        bot_token=config.BOT_TOKEN,
-    )
-    temp_client.start()
-    info = temp_client.get_me()
-    username = info.username
-    temp_client.stop()
-    _mongo_async_ = _mongo_client_(TEMP_MONGODB)
-    _mongo_sync_ = MongoClient(TEMP_MONGODB)
-    mongodb = _mongo_async_[username]
-    pymongodb = _mongo_sync_[username]
-else:
-    _mongo_async_ = _mongo_client_(config.MONGO_DB_URI)
-    _mongo_sync_ = MongoClient(config.MONGO_DB_URI)
-    mongodb = _mongo_async_.Kaal
-    pymongodb = _mongo_sync_.Kaal
+_mongo_async_ = _mongo_client_(_uri)
+_mongo_sync_ = MongoClient(_uri)
+
+# Database name is fixed as "Kaal" for backward compatibility with existing collections.
+mongodb = _mongo_async_.Kaal
+pymongodb = _mongo_sync_.Kaal

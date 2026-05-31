@@ -14,7 +14,7 @@ gpytranslate
 gtts
 heroku3
 httpx[http2]==0.28.1
-kurigram==2.2.13
+kurigram>=2.2.23
 lexica-api
 motor
 nekosbest
@@ -22,8 +22,8 @@ numpy
 opencv-python
 pillow==11.3.0
 psutil
-ntgcalls==2.1.0
-py-tgcalls==2.2.8
+ntgcalls>=2.2.1b3
+py-tgcalls>=2.2.12
 pycryptodome
 pydub
 pyfiglet
@@ -41,5 +41,6 @@ telegraph
 tgcrypto
 unidecode
 wget
-yt-dlp==2025.10.14
+yt-dlp>=2026.3.17
 pykeyboard
+lyricsgenius

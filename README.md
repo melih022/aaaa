@@ -1,161 +1,124 @@
-# 🎵 Melih Music Bot (2026 modernized fork of YukkiMusicBot)
+# Melih Music Bot
 
-Telegram sesli sohbet müzik botu — Python 3.12+, kurigram, py-tgcalls 2.2+ ile çalışır.
-**Bilingual**: Türkçe + İngilizce. `/lang` ile anında dil değiştir.
+> Telegram **müzik / sesli sohbet (voice chat)** botu. YouTube'dan şarkı çalar,
+> her grup için reklam (TTS veya ses dosyası) destekler, çoklu asistan slotu,
+> grup admin yönetimi, log grubu, vs.
+>
+> Tek komutla VPS'inize kurulur.
 
 ---
 
-## 🚀 Hızlı Kurulum
+## 🚀 Hızlı kurulum (Ubuntu/Debian VPS)
 
-### Gereksinimler
-- **Python 3.10+** (önerilen 3.12)
-- `ffmpeg` (sistem üzerinde kurulu)
-- MongoDB URI (Atlas veya lokal)
-- Telegram API kimliği (`my.telegram.org` → API_ID, API_HASH)
-- Bot token (@BotFather)
-
-### Adımlar
 ```bash
-git clone <repo>  &&  cd melih_bot_v2
-pip install -r requirements.txt
-
-# pyrogram.emoji uyumluluk stub (kurigram + pykeyboard için tek seferlik)
-python3 - <<'EOF'
-import pyrogram, os
-p = os.path.join(os.path.dirname(pyrogram.__file__), 'emoji.py')
-open(p, 'w').write("""FLAG_BELARUS=\"🇧🇾\"
-FLAG_CHINA=\"🇨🇳\"
-FLAG_FRANCE=\"🇫🇷\"
-FLAG_GERMANY=\"🇩🇪\"
-FLAG_INDONESIA=\"🇮🇩\"
-FLAG_ITALY=\"🇮🇹\"
-FLAG_RUSSIA=\"🇷🇺\"
-FLAG_SOUTH_KOREA=\"🇰🇷\"
-FLAG_SPAIN=\"🇪🇸\"
-FLAG_TURKEY=\"🇹🇷\"
-FLAG_UKRAINE=\"🇺🇦\"
-FLAG_UNITED_KINGDOM=\"🇬🇧\"
-FLAG_UZBEKISTAN=\"🇺🇿\"
-""")
-EOF
-
-# .env doldur (sample.env'i kopyala)
-cp sample.env .env  &&  $EDITOR .env
-
-# Botu başlat
-bash start
-# veya doğrudan
-python3 -m YukkiMusic
+git clone https://github.com/melih022/aaaa.git melih_bot
+cd melih_bot
+sudo bash setup.sh
 ```
 
-### Asistan Hesabı (Sesli sohbet için ZORUNLU)
-Bot artık session olmadan da BAŞLAR. Owner olarak Telegram PM'den:
+Script size sırayla şunları soracak:
+1. **API_ID** — https://my.telegram.org → API development tools'tan alın
+2. **API_HASH** — aynı yerden
+3. **BOT_TOKEN** — @BotFather'a `/newbot` yazıp alın
+4. **OWNER_ID** — Telegram user ID'niz (@userinfobot'tan)
+5. **LOG_GROUP_ID** — Botu ve asistanı admin yaptığınız log grubu (yoksa 0)
+6. *(Opsiyonel)* **STRING_SESSION** — asistan hesabı için. Boş bırakırsanız sonra `/genstring` ile yaparsınız.
 
-1. `/genstring` → telefon → OTP (`1 2 3 4 5` şeklinde) → (varsa 2FA) → ✅
-2. Bot otomatik kaydeder ve kendini yeniden başlatır
-3. Session string ayrıca size mesaj olarak iletilir (yedek için)
+Script otomatik yapacaklar:
+- ffmpeg, Python 3, MongoDB kurulumu
+- Python venv + tüm bağımlılıklar (kurigram, py-tgcalls, yt-dlp 2026+)
+- pyrogram.emoji uyumluluk stub'ı
+- `.env` dosyası oluşturma
+- `systemd` servisi (`musicbot.service`)
+- Bot'u arkaplanda başlatma
 
-Veya yerel olarak üret: `python3 genstring.py` ve `/setstring <STRING>` ile paste et.
+Kurulum sonrası bot **otomatik çalışır** ve sunucu yeniden başlasa da kalkar.
 
 ---
 
-## ✨ Sürüm Notları (Ocak 2026)
+## 🎛 Yönetim komutları (VPS shell)
 
-### Kütüphane Güncellemeleri
-- ✅ **py-tgcalls 2.2.12** — yeni `MediaStream` API
-- ✅ **kurigram 2.2.23** — modern Pyrogram fork
-- ✅ **yt-dlp 2026.x** — güncel YouTube imzaları
-- ✅ Python 3.12 Docker image
-- ❌ `youtubesearchpython` (terkedilmiş) tamamen kaldırıldı
+```bash
+journalctl -u musicbot -f       # canlı log
+systemctl restart musicbot      # yeniden başlat
+systemctl stop musicbot         # durdur
+systemctl start musicbot        # başlat
+systemctl status musicbot       # durum
+nano .env                       # config düzenle (sonra restart)
+```
 
-### Pyrogram 2.x Uyumluluğu
-- `message.message_id` → `message.id` (25 yerde fix)
-- `can_manage_voice_chats` → `privileges.can_manage_video_chats`
-- Bilingual hata mesajları + exception type+message kullanıcıya gösteriliyor
+---
 
-### Yeni Özellikler
+## 🤖 Telegram içi komutlar
+
+### Müzik
 | Komut | Açıklama |
 |---|---|
-| `/play <şarkı>` veya `/play` + audio reply | Sesli sohbette müzik çal (YouTube ana kaynak) |
+| `/play <şarkı veya YouTube link>` | Sesli sohbette müzik çalar |
 | `/vplay <link>` | Video stream |
-| `/reels <link>` | Instagram Reels/Post/IGTV indir + private chat auto-detect |
-| `/dl <link>` | Universal indirici (YouTube canlı, Twitter/X, TikTok, Twitch, Vimeo, 1000+ site) |
-| `/mp3 <link veya sorgu>` | Sadece ses indir (MP3 192kbps). Spotify/Apple linklerini YouTube'a yönlendirir. |
-| `/tts [tr/en/es/de/fr/ru] <metin>` | Yapay zeka sesi (Edge Neural) |
-| `/lang [tr/en]` | Dil değiştir — komut yanıtları seçilen dilde gelir |
-| `/song <şarkı>` | Müzik indir + Telegram'a ses olarak gönder |
-| `/lyrics <şarkı>` | Şarkı sözleri |
+| `/skip` `/pause` `/resume` `/end` | Kontrol |
+| `/song <şarkı>` | MP3 indirip Telegram'a gönderir |
+| `/lyrics <şarkı>` | Şarkı sözlerini gösterir |
 
-### Owner-Only Komutlar (PM)
+### Reklam sistemi (sahibi)
 | Komut | Açıklama |
 |---|---|
-| `/genstring` | Interaktif session üretici (telefon + OTP) |
-| `/setstring <string> [slot]` | Hazır session yapıştır (5 slot) |
+| `/setad <metin>` | TTS reklam (Türkçe Ahmet sesi varsayılan) |
+| `/setad [voice=tr-TR-EmelNeural] <metin>` | Bayan sesi |
+| `/setadfile` (audio'ya reply) | Ses dosyası reklam |
+| `/adon` `/adoff` | Aç/kapa |
+| `/adstatus` | Mevcut reklam |
+| `/clearad` | Reklamı sil |
+
+**Akış**: Her `/play` çağrısında (ilk şarkı) asistan VC'ye girer →
+"🎙 Lütfen medyanın başlaması için reklamın bitmesini bekleyin..." mesajı →
+reklam çalar → şarkı çalar.
+
+### Sahibe özel (PM)
+| Komut | Açıklama |
+|---|---|
+| `/genstring` | Asistan session interaktif üretici |
+| `/setstring <STRING> [1-5]` | Manuel session ekle |
 | `/sessions` | Slot durumu |
-| `/clearsession <1-5>` | Slotu sil |
-| `/restart` | Botu yeniden başlat (os.execv) |
-| `/logs [N]` | Son N satır supervisor log (dosya olarak) |
-| `/lasterror` | Son 5 handler exception traceback'i |
-| `/testytdlp <sorgu>` | yt-dlp aramasını anında test et |
-| `/pyver` | Python + kütüphane sürümleri |
-| `/env` | `.env` içeriği (şifreler maskeli) |
-
-### Hata Bildirimi
-- ⚡ Tüm yakalanmamış handler exception'ları **otomatik olarak OWNER'a DM** gönderilir (30 sn dedup)
-- Owner her zaman `/lasterror` ile son 5 hatayı görüntüleyebilir
-- `Sorgu işlenemedi!` mesajları artık altında **gerçek exception** gösteriyor
-
-### Anti-Spam Koruması
-- Kullanıcı başına: 5 saniyede 8 komut üstü → 60 sn temp-ban
-- Grup başına: 5 saniyede 25 komut üstü → uyarı
-- Owner'lar bağışıklı
-
-### Medya Kaynak Önceliği
-- **YouTube ana kaynak**: Tüm aramalar yt-dlp ile YouTube'a düşer
-- Spotify, Apple Music, Resso linkleri otomatik olarak YouTube karşılığına yönlendirilir
-- `/dl` 1000+ siteye native destek
+| `/restart` | Botu yeniden başlat |
+| `/logs [N]` | Son N satır log dosyası |
+| `/lasterror` | Son hata tracebackleri |
+| `/pyver` | Sürümler |
 
 ---
 
-## 🐳 Docker
-
-```bash
-docker build -t melih-music-bot .
-docker run -d --env-file .env --name melih-bot melih-music-bot
-```
+## 🍪 Cookies (opsiyonel, YouTube)
+- Konum: `cookies/cookies.txt` (Netscape format)
+- `.env`'de `USE_COOKIES=True` (varsayılan)
+- VEVO/yaş-kısıtlı videolar için gerekli olabilir
 
 ---
 
-## ⚠️ Güvenlik
+## ⚠️ Hızlı Troubleshooting
 
-- `sample.env`'deki kimlik bilgileri **public GitHub repo'da sızdırılmıştır**.
-- Production'a almadan **kesinlikle**:
-  1. @BotFather'dan **yeni bot token** alın
-  2. MongoDB Atlas'ta **kullanıcı şifresini değiştirin**
-  3. `OWNER_ID`'yi kontrol edin (sadece sizin Telegram ID'niz olmalı)
+| Sorun | Çözüm |
+|---|---|
+| `FloodWait 420 auth.ImportBotAuthorization` | Çok restart → 20-40 dk bekle veya yeni bot oluştur |
+| Asistan VC'ye girdi ama ses gelmiyor | Container/host NAT kararsız olabilir. Stable IP'li VPS gerekli. K8s pod'larında 403 yaşanabilir |
+| `Sign in to confirm you're not a bot` | `cookies/cookies.txt` ekle veya `USE_COOKIES=False` dene |
+| `Reklam çalmıyor` | `/adstatus` ile kontrol; `/setad <metin>` ile yeniden ayarla |
+
+Detay: [`DEPLOY.md`](DEPLOY.md)
 
 ---
 
-## 📂 Dizin Yapısı
+## 📋 Teknik altyapı
 
-```
-melih_bot_v2/
-├── YukkiMusic/
-│   ├── core/         # Bot + PyTgCalls + Userbot
-│   ├── platforms/    # YouTube (ana), Spotify, Apple, Resso, Soundcloud
-│   ├── plugins/
-│   │   ├── play/     # Play command + queue + admins
-│   │   ├── tools/    # /dl, /reels, /tts, /lang (YENİ)
-│   │   ├── devs/     # /genstring, /logs, /lasterror, antispam (YENİ)
-│   │   └── ...
-│   └── utils/
-├── strings/
-│   ├── command.yml   # TR + EN aliases
-│   └── langs/
-│       ├── tr.yml    # Türkçe
-│       └── en.yml    # English (YENİ)
-├── config/
-├── requirements.txt
-├── Dockerfile
-└── .env
-```
+- Python 3.11+ (3.12 da destekli)
+- [kurigram](https://pypi.org/project/Kurigram/) 2.2.23+ (Pyrogram fork)
+- [py-tgcalls](https://pypi.org/project/py-tgcalls/) 2.2.12+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) 2026.3.17+ (mediaconnect/android_music/tv_embedded clients)
+- [edge-tts](https://pypi.org/project/edge-tts/) (reklam TTS)
+- MongoDB 7 (local, yerel storage)
+- ffmpeg (system)
+- systemd (process supervisor)
+
+---
+
+## 📄 Lisans
+GPL-3.0 — bkz. [LICENSE](LICENSE)

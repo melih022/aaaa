@@ -4,31 +4,68 @@
 
 import asyncio
 import os
+import shutil
+import sys
+
+# Resolve the yt-dlp binary path once.
+# Strategy: first try the venv adjacent to sys.executable (works under
+# systemd/supervisor where PATH is minimal), then fall back to PATH lookup,
+# then last-resort literal "yt-dlp".
+def _resolve_ytdlp_bin():
+    venv_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+    if os.path.isfile(venv_bin) and os.access(venv_bin, os.X_OK):
+        return venv_bin
+    on_path = shutil.which("yt-dlp")
+    if on_path:
+        return on_path
+    return "yt-dlp"  # may fail loudly with FileNotFoundError
+
+YTDLP_BIN = _resolve_ytdlp_bin()
 import re
 from typing import Union
 
 import yt_dlp
 
+# Optional cookies.txt — auto-detected if present.
+# Order: ./cookies/cookies.txt -> ./cookies.txt -> $YT_COOKIES
+_COOKIES_CANDIDATES = [
+    os.path.join("cookies", "cookies.txt"),
+    "cookies.txt",
+    os.environ.get("YT_COOKIES", ""),
+]
+COOKIES_FILE = next((p for p in _COOKIES_CANDIDATES if p and os.path.isfile(p)), None)
+
 # Common yt-dlp options to bypass YouTube 403/anti-bot:
+# NOTE (2026): mediaconnect + android_music + tv_embedded are the most reliable
+# clients in early 2026 (other clients keep returning "No video formats found"
+# from datacenter IPs). When cookies are provided, we ALSO pass them — but
+# cookies from a residential IP can hurt rather than help on a datacenter host,
+# so a USE_COOKIES env flag lets the operator turn them off.
+_USE_COOKIES = os.environ.get("USE_COOKIES", "true").lower() not in ("false", "0", "no", "off")
 _YDL_BYPASS = {
     "geo_bypass": True,
     "geo_bypass_country": "US",
+    "nocheckcertificate": True,
+    "source_address": "0.0.0.0",
     "extractor_args": {
         "youtube": {
-            # 2026 working clients (no "Sign in to confirm you're not a bot"):
-            # mediaconnect = TV streaming, ios_music = music app, tv_embedded = legacy TV embed.
-            "player_client": ["mediaconnect", "ios_music", "tv_embedded"],
-            "formats": ["missing_pot"],
+            "player_client": ["mediaconnect", "android_music", "tv_embedded"],
         }
     },
-    "nocheckcertificate": True,
 }
+if COOKIES_FILE and _USE_COOKIES:
+    _YDL_BYPASS["cookiefile"] = COOKIES_FILE
 
 
 def _ydl_opts(extra):
     o = dict(_YDL_BYPASS)
     o.update(extra)
     return o
+
+
+def _cookie_cli_args():
+    """Return CLI args list for yt-dlp -g subprocess calls."""
+    return ["--cookies", COOKIES_FILE] if (COOKIES_FILE and _USE_COOKIES) else []
 
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
@@ -59,9 +96,11 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
         "extract_flat": "in_playlist" if flat else False,
         "geo_bypass": True,
         "geo_bypass_country": "US",
-        # Lightweight extractor_args for search (no formats restrictions):
-        "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
+        "source_address": "0.0.0.0",
+        "extractor_args": {"youtube": {"player_client": ["mediaconnect", "android_music", "tv_embedded"]}},
     }
+    if COOKIES_FILE and _USE_COOKIES:
+        opts["cookiefile"] = COOKIES_FILE
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(query, download=False)
 
@@ -230,10 +269,13 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "-g", "-f",
+            YTDLP_BIN, "-g", "-f",
             "best[height<=?720][width<=?1280]",
-            "--extractor-args", "youtube:player_client=mediaconnect,ios_music,tv_embedded;formats=missing_pot",
+            "--extractor-args", "youtube:player_client=mediaconnect,android_music,tv_embedded",
             "--geo-bypass",
+            "--source-address", "0.0.0.0",
+            "--no-warnings",
+            *_cookie_cli_args(),
             f"{link}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -248,8 +290,9 @@ class YouTubeAPI:
             link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
+        cookies_arg = f"--cookies {COOKIES_FILE} " if COOKIES_FILE else ""
         playlist = await shell_cmd(
-            f"yt-dlp -i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
+            f"{YTDLP_BIN} {cookies_arg}-i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
         )
         try:
             result = [x for x in playlist.split("\n") if x]
@@ -262,10 +305,16 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = await _ytsearch(link, 1)
+        is_url = bool(re.match(r"^https?://", link))
+        # For URL: single result. For text query: search up to 6 results and
+        # smart-pick one that's actually playable.
+        results = await _ytsearch(link, 1 if is_url else 6)
         if not results:
             raise Exception("No results")
-        r = results[0]
+        if is_url:
+            r = results[0]
+        else:
+            r = self._pick_best(results)
         td = {
             "title": r["title"],
             "link": r["link"],
@@ -274,6 +323,28 @@ class YouTubeAPI:
             "thumb": r["thumbnails"][0]["url"].split("?")[0],
         }
         return td, r["id"]
+
+    @staticmethod
+    def _pick_best(results):
+        """Pick the best candidate, deprioritising VEVO/Official Music Videos
+        (often DRM-blocked from datacenter IPs)."""
+        BAD_TITLE_HINTS = (
+            "official music video",
+            "(official video)",
+            "[official video]",
+            "official vevo",
+            "vevo",
+        )
+        bad = []
+        good = []
+        for cand in results:
+            t = (cand.get("title") or "").lower()
+            if any(h in t for h in BAD_TITLE_HINTS):
+                bad.append(cand)
+            else:
+                good.append(cand)
+        # Prefer first 'good' (non-VEVO). Fall back to first 'bad' if none.
+        return (good[0] if good else (bad[0] if bad else results[0]))
 
     async def formats(self, link, videoid=None):
         if videoid:
@@ -332,6 +403,7 @@ class YouTubeAPI:
                 "outtmpl": "downloads/%(id)s.%(ext)s",
                 "geo_bypass": True, "nocheckcertificate": True,
                 "quiet": True, "no_warnings": True,
+                "extractor_args": {"youtube": {"player_client": ["mediaconnect", "android_music", "tv_embedded"]}},
             }
             x = yt_dlp.YoutubeDL(_ydl_opts(opts))
             info = x.extract_info(link, False)
@@ -394,8 +466,11 @@ class YouTubeAPI:
                 downloaded_file = await loop.run_in_executor(None, video_dl)
             else:
                 proc = await asyncio.create_subprocess_exec(
-                    "yt-dlp", "-g", "-f",
+                    YTDLP_BIN, "-g", "-f",
                     "best[height<=?720][width<=?1280]",
+                    "--extractor-args", "youtube:player_client=mediaconnect,android_music,tv_embedded",
+                    "--no-warnings",
+                    *_cookie_cli_args(),
                     f"{link}",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -406,7 +481,56 @@ class YouTubeAPI:
                     direct = None
                 else:
                     return
+            return downloaded_file, direct
         else:
-            direct = True
-            downloaded_file = await loop.run_in_executor(None, audio_dl)
-        return downloaded_file, direct
+            # Audio: direct streaming URL via yt-dlp -g (no disk write).
+            # Try multiple strategies; log stderr if everything fails.
+            stream_url = None
+            last_err = ""
+            attempts = [
+                # 1: mediaconnect + android_music + tv_embedded (the most reliable)
+                [YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best",
+                 "--extractor-args",
+                 "youtube:player_client=mediaconnect,android_music,tv_embedded",
+                 "--no-warnings", "--no-call-home", *_cookie_cli_args(),
+                 f"{link}"],
+                # 2: web/android (newer)
+                [YTDLP_BIN, "-g", "-f", "bestaudio/best",
+                 "--extractor-args", "youtube:player_client=web_music,android_vr",
+                 "--no-warnings", f"{link}"],
+                # 3: permissive default
+                [YTDLP_BIN, "-g", "-f", "bestaudio/best",
+                 "--no-warnings", "--no-check-formats", f"{link}"],
+            ]
+            for idx, cmd in enumerate(attempts, 1):
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if stdout and stdout.strip():
+                        url = stdout.decode().split("\n")[0].strip()
+                        if url.startswith("http"):
+                            stream_url = url
+                            break
+                    last_err = (stderr or b"").decode()[-300:] if stderr else "empty stdout"
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    continue
+            if stream_url:
+                return stream_url, None
+            # Audio_dl fallback (only succeeds if yt-dlp can really download)
+            try:
+                direct = True
+                downloaded_file = await loop.run_in_executor(None, audio_dl)
+                return downloaded_file, direct
+            except Exception as e:
+                raise Exception(
+                    f"yt-dlp ile ses çekilemedi.\n"
+                    f"Son hata: {last_err[-200:]}\n"
+                    f"Download fallback: {type(e).__name__}: {str(e)[:120]}\n"
+                    f"İpucu: Yaş kısıtlı/VEVO videolar genelde başarısız. "
+                    f"Şarkı adına 'lyrics' veya 'audio' ekleyerek tekrar deneyin."
+                )

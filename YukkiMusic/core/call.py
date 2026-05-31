@@ -97,7 +97,7 @@ def _media(link, video=None, audio_quality=None, video_quality=None,
     if video:
         kwargs["video_parameters"] = _video_quality(video_quality)
     else:
-        kwargs["video_flags"] = MediaStream.IGNORE
+        kwargs["video_flags"] = MediaStream.Flags.IGNORE
     if extra_ffmpeg:
         kwargs["ffmpeg_parameters"] = extra_ffmpeg
     return MediaStream(link, **kwargs)
@@ -233,19 +233,40 @@ class Call(PyTgCalls):
         aq = await get_audio_bitrate(chat_id)
         vq = await get_video_bitrate(chat_id)
         stream = _media(link, video, aq, vq)
+        # First attempt: try to play. If anything fails (NoActiveGroupCall,
+        # assistant not in chat, etc.) — try to join the assistant to the chat,
+        # then retry once.
         try:
             await a.play(chat_id, stream)
-        except NoActiveGroupCall:
+        except Exception as first_err:
+            LOGGER(__name__).warning(
+                f"play() first attempt failed in chat {chat_id}: "
+                f"{type(first_err).__name__}: {first_err}. Trying to join assistant."
+            )
             try:
                 await self.join_assistant(original_chat_id, chat_id)
-            except Exception as e:
-                raise e
+            except AssistantErr:
+                raise
+            except Exception as join_err:
+                # Surface a clear message instead of dying silently.
+                raise AssistantErr(
+                    f"**Asistan gruba katılamadı**\n\n"
+                    f"`{type(join_err).__name__}: {join_err}`\n\n"
+                    f"Çözüm: Botu admin yapın (Üye Davet Et yetkisi) ya da "
+                    f"asistan hesabını ({getattr(a, 'me', None) or 'asistan'}) "
+                    f"manuel olarak gruba ekleyin."
+                )
             try:
                 await a.play(chat_id, stream)
-            except Exception:
+            except NoActiveGroupCall:
                 raise AssistantErr(
                     "**Aktif Sesli Sohbet Bulunamadı**\n\n"
-                    "Lütfen grubun sesli sohbetinin aktif olduğundan emin olun."
+                    "Lütfen önce grupta sesli sohbeti başlatın, sonra tekrar deneyin."
+                )
+            except Exception as second_err:
+                raise AssistantErr(
+                    f"**Sesli sohbete katılım başarısız**\n\n"
+                    f"`{type(second_err).__name__}: {second_err}`"
                 )
 
         await add_active_chat(chat_id)

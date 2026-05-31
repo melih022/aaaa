@@ -43,7 +43,22 @@ async def init():
     except Exception:
         pass
 
-    await app.start()
+    # Robust bot start: handle FloodWait gracefully (sleep then retry once).
+    from pyrogram.errors import FloodWait
+    while True:
+        try:
+            await app.start()
+            break
+        except FloodWait as fw:
+            wait_s = int(getattr(fw, "value", 0) or 60)
+            LOGGER("YukkiMusic").warning(
+                f"Bot login FloodWait: sleeping {wait_s}s before retry."
+            )
+            await asyncio.sleep(wait_s + 5)
+        except Exception as e:
+            LOGGER("YukkiMusic").error(f"Bot start fatal: {type(e).__name__}: {e}")
+            raise
+
     for m in ALL_MODULES:
         importlib.import_module("YukkiMusic.plugins" + m)
     LOGGER("Yukkimusic.plugins").info("Moduller iceri aktarildi")
@@ -81,8 +96,17 @@ async def init():
 
 
 if __name__ == "__main__":
+    # NOTE: do NOT use asyncio.run() / new_event_loop — pyrogram Client objects
+    # are constructed at module import time and bind to `asyncio.get_event_loop()`.
+    # Creating a fresh loop detaches them and triggers
+    # "Task got Future attached to a different loop".
     try:
-        asyncio.run(init())
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(init())
     except KeyboardInterrupt:
         pass
     LOGGER("YukkiMusic").info("Bot durduruldu. Gule gule.")

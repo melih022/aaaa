@@ -20,7 +20,8 @@ from YukkiMusic.misc import db
 from YukkiMusic.utils.database import (add_active_chat,
                                        add_active_video_chat,
                                        is_active_chat,
-                                       is_video_allowed, music_on)
+                                       is_video_allowed, music_on,
+                                       prepare_ad_file)
 from YukkiMusic.utils.exceptions import AssistantErr
 from YukkiMusic.utils.inline.play import (stream_markup,
                                           telegram_markup)
@@ -28,6 +29,58 @@ from YukkiMusic.utils.inline.playlist import close_markup
 from YukkiMusic.utils.pastebin import Yukkibin
 from YukkiMusic.utils.stream.queue import put_queue, put_queue_index
 from YukkiMusic.utils.thumbnails import gen_thumb
+
+
+async def _maybe_play_ad(chat_id, original_chat_id):
+    """If owner has an active ad configured, play it on the chat's VC.
+    Returns True if an ad was played (caller should queue the real song and
+    let change_stream advance the queue). Returns False otherwise (caller
+    proceeds normally and plays the song directly via join_call).
+
+    NOTE: When this returns True, the caller MUST `put_queue` the actual song
+    BEFORE calling this (so queue[0]=AD, queue[1]=SONG by the time AD ends).
+    Pattern:
+        await put_queue(... real song ...)             # queue[0] = song
+        if await _maybe_play_ad(chat_id, original_chat_id):
+            return  # ad is playing; change_stream will advance to song
+        await Yukki.join_call(chat_id, original_chat_id, real_file)
+    """
+    ad_path = await prepare_ad_file()
+    if not ad_path:
+        return False
+    # Insert AD at queue position 0 (currently playing slot), keeping the
+    # already-queued song at position 1.
+    db.setdefault(chat_id, [])
+    db[chat_id].insert(0, {
+        "title": "📢 REKLAM",
+        "dur": "—",
+        "streamtype": "ad",
+        "by": "Bot",
+        "chat_id": original_chat_id,
+        "file": ad_path,
+        "vidid": "ad",
+        "seconds": 0,
+        "played": 0,
+    })
+    try:
+        await app.send_message(
+            original_chat_id,
+            "🎙 **Lütfen medyanın başlaması için reklamın bitmesini bekleyin...**",
+        )
+    except Exception:
+        pass
+    try:
+        await Yukki.join_call(chat_id, original_chat_id, ad_path, video=None)
+    except Exception:
+        # If ad playback fails, pop the ad entry so change_stream doesn't
+        # think it's currently playing.
+        try:
+            if db[chat_id] and db[chat_id][0].get("streamtype") == "ad":
+                db[chat_id].pop(0)
+        except Exception:
+            pass
+        return False
+    return True
 
 
 async def stream(
@@ -154,8 +207,25 @@ async def stream(
             file_path, direct = await YouTube.download(
                 vidid, mystic, videoid=True, video=status
             )
-        except:
-            raise AssistantErr(_["play_16"] + "\n\n💡 Asistan voice chat'e katılamamış olabilir veya medya kaynağı yanıt vermedi.")
+        except Exception as _yt_err:
+            # Try one fallback: append "audio" to original query and retry track+download
+            try:
+                from YukkiMusic.platforms.Youtube import YouTubeAPI as _Y
+                fb_td, fb_vid = await _Y().track(f"{result['title']} audio")
+                if fb_vid and fb_vid != vidid:
+                    file_path, direct = await YouTube.download(
+                        fb_vid, mystic, videoid=True, video=status
+                    )
+                    vidid = fb_vid
+                    title = (fb_td["title"]).title()
+                    duration_min = fb_td["duration_min"]
+                else:
+                    raise _yt_err
+            except Exception:
+                raise AssistantErr(
+                    f"{_['play_16']}\n\n💡 Asistan voice chat'e katılamamış olabilir veya medya kaynağı yanıt vermedi.\n\n"
+                    f"Detay: `{type(_yt_err).__name__}: {str(_yt_err)[:200]}`"
+                )
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
@@ -178,9 +248,9 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Yukki.join_call(
-                chat_id, original_chat_id, file_path, video=status
-            )
+
+            # Queue the song first (it will be played either directly or
+            # after the pre-roll ad ends — change_stream handles it).
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -192,6 +262,16 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
                 forceplay=forceplay,
+            )
+
+            if await _maybe_play_ad(chat_id, original_chat_id):
+                # Ad is playing; on StreamEnded, change_stream will advance
+                # to the queued song and send its "now playing" message.
+                return
+
+            # No ad — play the song directly.
+            await Yukki.join_call(
+                chat_id, original_chat_id, file_path, video=status
             )
             img = await gen_thumb(vidid)
             button = stream_markup(_, vidid, chat_id)
@@ -231,9 +311,6 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Yukki.join_call(
-                chat_id, original_chat_id, file_path, video=None
-            )
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -245,6 +322,11 @@ async def stream(
                 user_id,
                 "audio",
                 forceplay=forceplay,
+            )
+            if await _maybe_play_ad(chat_id, original_chat_id):
+                return
+            await Yukki.join_call(
+                chat_id, original_chat_id, file_path, video=None
             )
             button = telegram_markup(_, chat_id)
             run = await app.send_message(
@@ -284,9 +366,6 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Yukki.join_call(
-                chat_id, original_chat_id, file_path, video=status
-            )
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -301,6 +380,11 @@ async def stream(
             )
             if video:
                 await add_active_video_chat(chat_id)
+            if await _maybe_play_ad(chat_id, original_chat_id):
+                return
+            await Yukki.join_call(
+                chat_id, original_chat_id, file_path, video=status
+            )
             button = telegram_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -345,9 +429,6 @@ async def stream(
             n, file_path = await YouTube.video(link)
             if n == 0:
                 raise AssistantErr(_["str_3"])
-            await Yukki.join_call(
-                chat_id, original_chat_id, file_path, video=status
-            )
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -359,6 +440,11 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
                 forceplay=forceplay,
+            )
+            if await _maybe_play_ad(chat_id, original_chat_id):
+                return
+            await Yukki.join_call(
+                chat_id, original_chat_id, file_path, video=status
             )
             img = await gen_thumb(vidid)
             button = telegram_markup(_, chat_id)
@@ -396,12 +482,6 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Yukki.join_call(
-                chat_id,
-                original_chat_id,
-                link,
-                video=True if video else None,
-            )
             await put_queue_index(
                 chat_id,
                 original_chat_id,
@@ -412,6 +492,14 @@ async def stream(
                 link,
                 "video" if video else "audio",
                 forceplay=forceplay,
+            )
+            if await _maybe_play_ad(chat_id, original_chat_id):
+                return
+            await Yukki.join_call(
+                chat_id,
+                original_chat_id,
+                link,
+                video=True if video else None,
             )
             button = telegram_markup(_, chat_id)
             run = await app.send_message(

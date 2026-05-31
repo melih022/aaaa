@@ -502,12 +502,12 @@ async def get_video_bitrate(chat_id: int):
     mode = video.get(chat_id)
     if not mode:
         if PRIVATE_BOT_MODE == str(True):
-            return VideoQuality.HIGH
+            return VideoQuality.FHD_1080p
         else:
-            return VideoQuality.MEDIUM
+            return VideoQuality.HD_720p
     if str(mode) == "High":
-        return VideoQuality.HIGH
+        return VideoQuality.FHD_1080p
     elif str(mode) == "Medium":
-        return VideoQuality.MEDIUM
+        return VideoQuality.HD_720p
     elif str(mode) == "Low":
-        return VideoQuality.LOW
+        return VideoQuality.SD_360p

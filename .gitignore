@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Bot runtime state
+YukkiMusicBot.session*
+*.session
+*.session-journal
+Yukkilogs.txt
+debug_bot.py
+*.log
+
+# Downloads & temp
+downloads/
+cache/
+
+# Ads (owner-generated)
+ads/ad_tts.mp3
+ads/ad_audio.*
+
+# Cookies are sensitive but committed since the user explicitly uploaded
+# them and wants the bot to work out-of-the-box on their VPS.
+# (Comment out the line below if you ever want to keep cookies out of git.)
+# cookies/cookies.txt
+
+# Env (sensitive — never commit creds)
+.env
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
