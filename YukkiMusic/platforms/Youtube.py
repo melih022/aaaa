@@ -112,11 +112,12 @@ _YDL_BYPASS = {
 
 def _ydl_opts(extra):
     o = dict(_YDL_BYPASS)
-    # Dynamic cookies — picks up freshly uploaded cookies.txt
-    # Only attach if cookies look complete (avoid the partial-cookies
-    # anti-bot trap).
+    # Dynamic cookies — picks up freshly uploaded cookies.txt.
+    # 2026-06: always attach cookies if present (regardless of heuristic
+    # validity check). yt-dlp's bot-check on datacenter IPs is so
+    # aggressive that even partial cookies sometimes help.
     cf = _current_cookies()
-    if cf and _USE_COOKIES and _cookies_look_valid(cf):
+    if cf and _USE_COOKIES:
         o["cookiefile"] = cf
     o.update(extra)
     return o
@@ -125,9 +126,9 @@ def _ydl_opts(extra):
 def _cookie_cli_args():
     """Return CLI args list for yt-dlp -g subprocess calls. Re-checks
     cookies file on every call so /setcookies works without restart.
-    Skips partial cookies (see _cookies_look_valid)."""
+    Always attach if file present (let yt-dlp decide if cookies help)."""
     cf = _current_cookies()
-    if cf and _USE_COOKIES and _cookies_look_valid(cf):
+    if cf and _USE_COOKIES:
         return ["--cookies", cf]
     return []
 
@@ -489,13 +490,14 @@ class YouTubeAPI:
             log = logging.getLogger("YukkiMusic")
 
             cf = _current_cookies()
-            cookies_ok = _USE_COOKIES and _cookies_look_valid(cf)
-            if cf and not cookies_ok:
+            cookies_present = bool(cf) and _USE_COOKIES
+            cookies_look_good = cookies_present and _cookies_look_valid(cf)
+            if cookies_present and not cookies_look_good:
                 log.warning(
-                    "cookies.txt found but looks INCOMPLETE (missing SAPISID/"
-                    "__Secure-3PAPISID or <3KB) — running yt-dlp WITHOUT "
-                    "cookies. Re-export full cookies via /setcookies for "
-                    "VEVO/age-restricted videos."
+                    f"cookies.txt looks partial ({os.path.getsize(cf)} bytes) — "
+                    "trying with cookies ANYWAY, then falling back to "
+                    "cookie-less if rejected. Re-export full browser cookies "
+                    "via /setcookies for best results."
                 )
 
             def _make_opts(player_clients, player_skip=None, cookiefile=None):
@@ -528,30 +530,35 @@ class YouTubeAPI:
                 return xyz
 
             # Strategy list — each entry: (label, player_clients, player_skip, use_cookies)
-            # 2026-06: tested order — classic combo is the most reliable on
-            # datacenter IPs; tv_simply/web_embedded/android_vr were
-            # less reliable in benchmarks.
+            # 2026-06: try WITH cookies first (always — even if partial), then
+            # fall back to cookie-less. YouTube's bot-check is aggressive on
+            # datacenter IPs and even partial cookies sometimes work where
+            # cookie-less does not.
             strategies = []
-            if cookies_ok:
-                strategies.append((
-                    "with-cookies (default,ios,mweb)",
-                    ["default", "ios", "mweb"],
-                    None, True,
-                ))
+            if cookies_present:
+                strategies.extend([
+                    # 1A) with-cookies + classic combo
+                    ("with-cookies default,ios,mweb,android_music,tv_embedded",
+                     ["default", "ios", "mweb", "android_music", "tv_embedded"],
+                     None, True),
+                    # 1B) with-cookies + web (cookies-friendly client)
+                    ("with-cookies web,mweb",
+                     ["web", "mweb"], None, True),
+                ])
             # Cookie-less strategies (ordered by tested reliability)
             strategies.extend([
-                # 1) CLASSIC combo — verified most reliable on datacenter IPs
+                # 2) CLASSIC combo — verified most reliable on datacenter IPs
                 ("cookie-less default,ios,mweb,android_music,tv_embedded",
                  ["default", "ios", "mweb", "android_music", "tv_embedded"],
                  None, False),
-                # 2) mediaconnect variant
+                # 3) mediaconnect variant
                 ("cookie-less mediaconnect,android_music,tv_embedded",
                  ["mediaconnect", "android_music", "tv_embedded"],
                  None, False),
-                # 3) ios+mweb (lighter)
+                # 4) ios+mweb (lighter)
                 ("cookie-less ios,mweb",
                  ["ios", "mweb"], None, False),
-                # 4) android_vr only (rare fallback)
+                # 5) android_vr only (rare fallback)
                 ("cookie-less android_vr",
                  ["android_vr"], None, False),
             ])
@@ -560,7 +567,7 @@ class YouTubeAPI:
             for label, clients, skip, use_cookies in strategies:
                 opts = _make_opts(
                     clients, skip,
-                    cookiefile=(cf if (use_cookies and cookies_ok) else None),
+                    cookiefile=(cf if (use_cookies and cookies_present) else None),
                 )
                 try:
                     result = _try(opts)
