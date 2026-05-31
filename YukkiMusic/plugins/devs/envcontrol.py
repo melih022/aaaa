@@ -401,16 +401,40 @@ async def cmd_cookiestatus(client, message: Message):
         )
     try:
         with open(found, "r", errors="replace") as f:
-            head = f.read(2048)
+            full_content = f.read(60000)
+        head = full_content[:2048]
         yt_lines = sum(1 for line in head.split("\n") if "youtube" in line.lower())
+        content_l = full_content.lower()
+        has_sapisid = "sapisid" in content_l
+        has_secure = "__secure-3papisid" in content_l or "__secure-1papisid" in content_l
+        has_login = "login_info" in content_l
     except Exception:
         yt_lines = 0
-    await message.reply_text(
-        f"✅ Cookies aktif\n"
+        has_sapisid = has_secure = has_login = False
+
+    quality_ok = has_sapisid and has_secure and size >= 3000
+
+    txt = (
+        f"{'✅' if quality_ok else '⚠️'} Cookies durumu\n"
         f"📂 `{found}`\n"
         f"📦 `{size:,} byte`\n"
-        f"🎬 youtube satır sayısı (head): `{yt_lines}`"
+        f"🎬 youtube satır sayısı (head): `{yt_lines}`\n\n"
+        f"🔑 Kritik cookie'ler:\n"
+        f"  • SAPISID:           {'✅' if has_sapisid else '❌'}\n"
+        f"  • __Secure-3PAPISID: {'✅' if has_secure  else '❌'}\n"
+        f"  • LOGIN_INFO:        {'✅' if has_login   else '❌'}\n\n"
     )
+    if quality_ok:
+        txt += "✅ Cookies dolu görünüyor, yt-dlp kullanacak."
+    else:
+        txt += (
+            "⚠️ **Eksik cookies** — bot bunları **kullanmayacak**, cookie-less "
+            "modda çalışacak. Çoğu video bu modda da çalışır.\n\n"
+            "Tam cookies için: Chrome'a 'Get cookies.txt LOCALLY' eklentisini "
+            "kurun, youtube.com'a **giriş yapın**, bir video açın, sonra "
+            "eklentiden export edin (5+ KB olmalı). `/setcookies` ile yükleyin."
+        )
+    await message.reply_text(txt)
 
 
 # ---------- /cookietest : verify cookies actually work against YouTube ----------
@@ -421,27 +445,44 @@ async def cmd_cookietest(client, message: Message):
     that cookies + yt-dlp work end-to-end on this VPS."""
     status = await message.reply_text("🔍 yt-dlp + cookies testi başlıyor…")
 
-    # "Despacito" — most-viewed video on YouTube, always available
-    test_url = "https://www.youtube.com/watch?v=kJQP7kiw5Fk"
+    # Rick Astley - "Never Gonna Give You Up" — globally available, no
+    # age/region restrictions, perfect for verifying yt-dlp works at all.
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-    from YukkiMusic.platforms.Youtube import _current_cookies, YTDLP_BIN
+    from YukkiMusic.platforms.Youtube import (
+        _current_cookies, _cookies_look_valid, YTDLP_BIN,
+    )
     cf = _current_cookies()
-    cookies_info = f"`{cf}` ({os.path.getsize(cf):,} byte)" if cf else "❌ YOK"
+    cookies_valid = _cookies_look_valid(cf)
+    if not cf:
+        cookies_info = "❌ YOK"
+    elif not cookies_valid:
+        cookies_info = f"⚠️ `{cf}` ({os.path.getsize(cf):,} byte) — EKSİK (cookie-less modda test edilecek)"
+    else:
+        cookies_info = f"✅ `{cf}` ({os.path.getsize(cf):,} byte) — geçerli"
 
-    attempts = [
-        ("ba/b", "default,ios,mweb,android_music,tv_embedded"),
-        ("bestaudio[ext=m4a]/bestaudio/best", "mediaconnect,android_music,tv_embedded"),
-        ("bestaudio/best", "ios,mweb"),
+    # Define attempts (fmt, clients, use_cookies_if_valid)
+    attempts_def = [
+        ("ba/b", "default,ios,mweb,android_music,tv_embedded", True),
+        ("bestaudio[ext=m4a]/bestaudio/best", "mediaconnect,android_music,tv_embedded", True),
+        ("bestaudio/best", "ios,mweb", True),
+        # Final fallback: explicitly NO cookies (datacenter IPs often succeed
+        # cookie-less for non-restricted videos)
+        ("bestaudio/best", "android_music,tv_embedded", False),
     ]
 
     results = [f"📂 cookies: {cookies_info}", ""]
     success = False
-    for idx, (fmt, clients) in enumerate(attempts, 1):
+    for idx, (fmt, clients, use_cookies) in enumerate(attempts_def, 1):
         cmd = [*YTDLP_BIN, "-g", "-f", fmt,
                "--extractor-args", f"youtube:player_client={clients}",
                "--no-warnings"]
-        if cf:
+        label_suffix = ""
+        if use_cookies and cookies_valid and cf:
             cmd += ["--cookies", cf]
+            label_suffix = " +cookies"
+        else:
+            label_suffix = " (cookie-less)"
         cmd.append(test_url)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -451,12 +492,12 @@ async def cmd_cookietest(client, message: Message):
             )
             out, err = await proc.communicate()
             if proc.returncode == 0 and out.strip().startswith(b"http"):
-                results.append(f"✅ Deneme #{idx} (`{fmt}`, `{clients}`): **OK**")
+                results.append(f"✅ Deneme #{idx} (`{fmt}`{label_suffix}): **OK**")
                 success = True
                 break
             else:
                 err_short = (err.decode(errors="replace") or "boş")[-200:].strip()
-                results.append(f"❌ Deneme #{idx} (`{fmt}`):\n   `{err_short}`")
+                results.append(f"❌ Deneme #{idx} (`{fmt}`{label_suffix}):\n   `{err_short}`")
         except Exception as e:
             results.append(f"❌ Deneme #{idx}: `{type(e).__name__}: {e}`")
 

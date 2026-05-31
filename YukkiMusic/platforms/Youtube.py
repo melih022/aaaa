@@ -49,6 +49,31 @@ def _detect_cookies() -> str | None:
     return None
 
 
+def _cookies_look_valid(path: str | None) -> bool:
+    """Heuristic check: real YouTube login cookies should contain
+    SAPISID + __Secure-3PAPISID + at least ~3KB of content. A small file
+    (<3 KB) or one missing these markers is usually a partial export
+    that makes yt-dlp send 'authenticated' requests with no real session
+    → YouTube responds with 'Sign in to confirm you're not a bot'.
+    Returning False makes the caller fall back to cookie-less mode."""
+    if not path:
+        return False
+    try:
+        size = os.path.getsize(path)
+        if size < 3000:
+            return False
+        with open(path, "r", errors="replace") as f:
+            text = f.read(60000)
+        text_l = text.lower()
+        has_critical = (
+            "sapisid" in text_l
+            and ("__secure-3papisid" in text_l or "__secure-1papisid" in text_l)
+        )
+        return has_critical
+    except Exception:
+        return False
+
+
 # Backwards-compat constant — still imported by other modules. Lazy-evaluated
 # via _current_cookies() everywhere it matters.
 COOKIES_FILE = _detect_cookies()
@@ -56,7 +81,9 @@ COOKIES_FILE = _detect_cookies()
 
 def _current_cookies() -> str | None:
     """Always re-detect so a freshly uploaded cookies.txt is picked up
-    without restarting the bot."""
+    without restarting the bot.
+    NOTE: Returns the path even if cookies look incomplete — caller
+    decides via _cookies_look_valid() whether to actually use them."""
     return _detect_cookies()
 
 # Common yt-dlp options to bypass YouTube 403/anti-bot:
@@ -83,8 +110,10 @@ _YDL_BYPASS = {
 def _ydl_opts(extra):
     o = dict(_YDL_BYPASS)
     # Dynamic cookies — picks up freshly uploaded cookies.txt
+    # Only attach if cookies look complete (avoid the partial-cookies
+    # anti-bot trap).
     cf = _current_cookies()
-    if cf and _USE_COOKIES:
+    if cf and _USE_COOKIES and _cookies_look_valid(cf):
         o["cookiefile"] = cf
     o.update(extra)
     return o
@@ -92,9 +121,12 @@ def _ydl_opts(extra):
 
 def _cookie_cli_args():
     """Return CLI args list for yt-dlp -g subprocess calls. Re-checks
-    cookies file on every call so /setcookies works without restart."""
+    cookies file on every call so /setcookies works without restart.
+    Skips partial cookies (see _cookies_look_valid)."""
     cf = _current_cookies()
-    return ["--cookies", cf] if (cf and _USE_COOKIES) else []
+    if cf and _USE_COOKIES and _cookies_look_valid(cf):
+        return ["--cookies", cf]
+    return []
 
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
@@ -444,16 +476,27 @@ class YouTubeAPI:
             # bestaudio + cookies. With valid cookies this almost always works
             # while the streaming-URL (-g) path keeps tripping over format
             # selectors. Output: downloads/<id>.<ext>
+            #
+            # 2026-06 fix: try with cookies first ONLY if they look complete
+            # (SAPISID + __Secure-3PAPISID + >=3KB). Partial/expired cookies
+            # actually make YouTube reject the request with "Sign in to
+            # confirm you're not a bot" — so we fall back to cookie-less mode
+            # automatically. Many videos work fine on datacenter IPs without
+            # cookies (verified on yt-dlp 2026.03.17+).
+            import logging
+            log = logging.getLogger("YukkiMusic")
+
             cf = _current_cookies()
-            if not cf:
-                # Loud warning so it shows up in journalctl — helps the user
-                # immediately see why YouTube rejects the request.
-                import logging
-                logging.getLogger("YukkiMusic").warning(
-                    "yt-dlp called WITHOUT cookies — YouTube will likely refuse. "
-                    "Run /setcookies in PM to fix."
+            cookies_ok = _USE_COOKIES and _cookies_look_valid(cf)
+            if cf and not cookies_ok:
+                log.warning(
+                    "cookies.txt found but looks INCOMPLETE (missing SAPISID/"
+                    "__Secure-3PAPISID or <3KB) — running yt-dlp WITHOUT "
+                    "cookies. Re-export full cookies via /setcookies for "
+                    "VEVO/age-restricted videos."
                 )
-            opts = {
+
+            base_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": "downloads/%(id)s.%(ext)s",
                 "geo_bypass": True,
@@ -463,16 +506,50 @@ class YouTubeAPI:
                 "retries": 5,
                 "fragment_retries": 5,
                 "concurrent_fragment_downloads": 4,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": [
+                            "default", "ios", "mweb",
+                            "android_music", "tv_embedded",
+                        ],
+                    }
+                },
             }
-            if cf:
-                opts["cookiefile"] = cf
-            x = yt_dlp.YoutubeDL(opts)
-            info = x.extract_info(link, download=False)
-            xyz = os.path.join("downloads", f"{info['id']}.{info['ext']}")
-            if os.path.exists(xyz):
+
+            def _try(opts):
+                x = yt_dlp.YoutubeDL(opts)
+                info = x.extract_info(link, download=False)
+                xyz = os.path.join("downloads", f"{info['id']}.{info['ext']}")
+                if os.path.exists(xyz):
+                    return xyz
+                x.download([link])
                 return xyz
-            x.download([link])
-            return xyz
+
+            # Attempt 1: with valid cookies (if any)
+            if cookies_ok:
+                opts = dict(base_opts)
+                opts["cookiefile"] = cf
+                try:
+                    return _try(opts)
+                except Exception as e:
+                    msg = str(e).lower()
+                    if any(s in msg for s in (
+                        "sign in to confirm", "not a bot",
+                        "confirm you", "use --cookies",
+                    )):
+                        log.warning(
+                            "Cookies rejected by YouTube (likely expired). "
+                            "Retrying WITHOUT cookies..."
+                        )
+                    else:
+                        # Different error — still try cookie-less as fallback
+                        log.warning(
+                            f"audio_dl with cookies failed: {type(e).__name__}: "
+                            f"{str(e)[:200]} — retrying WITHOUT cookies"
+                        )
+
+            # Attempt 2: cookie-less (works for non-restricted videos)
+            return _try(base_opts)
 
         def video_dl():
             opts = {
