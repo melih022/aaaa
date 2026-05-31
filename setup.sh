@@ -182,20 +182,21 @@ prompt_var() {
   echo
   echo "${YELLOW}${desc}${NC}"
   local val=""
+  local prompt_label="   ${GREEN}>${NC} ${name} = "
   if [[ -n "$current" ]]; then
     local shown="$current"
     if [[ "$hidden" == "y" && ${#current} -gt 10 ]]; then
       shown="${current:0:6}...${current: -4}"
     fi
-    echo "   mevcut: ${shown}"
-    read -r -p "   Yeni değer (Enter=mevcudu koru): " val </dev/tty
+    echo "   ${YELLOW}mevcut:${NC} ${shown}"
+    read -r -p "${prompt_label}(Enter=mevcudu koru) " val </dev/tty
     [[ -z "$val" ]] && val="$current"
   else
     if [[ -n "$default" ]]; then
-      read -r -p "   Değer (Enter=${default}): " val </dev/tty
+      read -r -p "${prompt_label}(Enter=${default}) " val </dev/tty
       [[ -z "$val" ]] && val="$default"
     else
-      read -r -p "   Değer: " val </dev/tty
+      read -r -p "${prompt_label}" val </dev/tty
     fi
   fi
   printf "%s=%s\n" "$name" "$val"
@@ -203,20 +204,41 @@ prompt_var() {
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo "  Melih Music Bot — .env kurulumu"
-echo "  Sadece zorunlu birkaç değer sorulacak."
-echo "  Diğerlerini Telegram'da bot komutlarıyla yönetebilirsiniz."
+echo "  ${GREEN}.env yapılandırması${NC}"
+echo "  Aşağıdaki değerleri sırayla girin. Boş bırakırsanız varsayılan"
+echo "  veya mevcut değer kullanılır. Diğer ayarları bot içinden"
+echo "  Telegram komutlarıyla yönetebilirsiniz."
 echo "════════════════════════════════════════════════════════════════"
 
-API_ID_LINE=$(prompt_var "API_ID" "1) Telegram API_ID (my.telegram.org → API development tools)" "" "n")
-API_HASH_LINE=$(prompt_var "API_HASH" "2) Telegram API_HASH (aynı yerden)" "" "y")
-BOT_TOKEN_LINE=$(prompt_var "BOT_TOKEN" "3) Bot Token (@BotFather → /newbot veya /token)" "" "y")
-OWNER_ID_LINE=$(prompt_var "OWNER_ID" "4) Sahibinin Telegram User ID (@userinfobot ile öğren)" "" "n")
-LOG_GROUP_LINE=$(prompt_var "LOG_GROUP_ID" "5) Log Grup ID (botu ve asistanı admin yapın). Yoksa 0 girin" "0" "n")
+API_ID_LINE=$(prompt_var "API_ID" \
+  "1) ${YELLOW}API_ID${NC} — Telegram API kimliği (sayı, ~8 hane). https://my.telegram.org → 'API development tools' sayfasından alın." \
+  "" "n")
+
+API_HASH_LINE=$(prompt_var "API_HASH" \
+  "2) ${YELLOW}API_HASH${NC} — API_ID ile aynı yerden gelen hash (~32 karakter)." \
+  "" "y")
+
+BOT_TOKEN_LINE=$(prompt_var "BOT_TOKEN" \
+  "3) ${YELLOW}BOT_TOKEN${NC} — Bot için Token. Telegram'da @BotFather'a /newbot yazıp alın. (Format: 1234567890:AbCdEf...)" \
+  "" "y")
+
+OWNER_ID_LINE=$(prompt_var "OWNER_ID" \
+  "4) ${YELLOW}OWNER_ID${NC} — Bot sahibinin Telegram user ID'si (sayı). @userinfobot'a yazıp öğrenin." \
+  "" "n")
+
+LOG_GROUP_LINE=$(prompt_var "LOG_GROUP_ID" \
+  "5) ${YELLOW}LOG_GROUP_ID${NC} — Log grubu ID. Bot ve asistanı admin yaptığınız grup. (-100... ile başlar) Yoksa 0 girin." \
+  "0" "n")
+
 MONGO_DEFAULT="mongodb://localhost:27017"
 [[ "$INSTALL_LOCAL_MONGO" == "no" ]] && MONGO_DEFAULT=""
-MONGO_LINE=$(prompt_var "MONGO_DB_URI" "6) MongoDB URI. Yerel kurduysanız Enter; Atlas/uzak için mongodb+srv://... yapıştırın" "$MONGO_DEFAULT" "y")
-STRING_LINE=$(prompt_var "STRING_SESSION" "7) (Opsiyonel) Asistan STRING_SESSION. Boş bırakırsanız bot çalışır, /genstring ile sonra ekleyebilirsiniz" "" "y")
+MONGO_LINE=$(prompt_var "MONGO_DB_URI" \
+  "6) ${YELLOW}MONGO_DB_URI${NC} — MongoDB bağlantı adresi. Yerel için Enter, Atlas için 'mongodb+srv://...' yapıştırın." \
+  "$MONGO_DEFAULT" "y")
+
+STRING_LINE=$(prompt_var "STRING_SESSION" \
+  "7) ${YELLOW}STRING_SESSION${NC} (opsiyonel) — Asistan hesabının Pyrogram string session. Boş bırakırsanız bot çalışır, sonradan PM'den /genstring komutuyla oluşturabilirsiniz." \
+  "" "y")
 
 cat > "$ENV_FILE" <<EOF
 ${API_ID_LINE}
