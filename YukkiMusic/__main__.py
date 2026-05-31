@@ -82,7 +82,13 @@ async def init():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(init())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Already inside a running loop (e.g. Jupyter / some WSGI hosts)
+            loop.create_task(init())
+        else:
+            loop.run_until_complete(init())
     except KeyboardInterrupt:
         pass
-    LOGGER("YukkiMusic").info("Bot durduruldu. Gule gule.")
+    finally:
+        LOGGER("YukkiMusic").info("Bot durduruldu. Gule gule.")
