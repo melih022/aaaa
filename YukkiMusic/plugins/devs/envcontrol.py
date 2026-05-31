@@ -336,7 +336,12 @@ async def cmd_setcookies(client, message: Message):
             "Yine de kaydediyorum…"
         )
 
-    cookies_dir = os.path.join(os.getcwd(), "cookies")
+    # Save to BOT ROOT (resolved from this file's path), not cwd — robust
+    # against systemd cwd quirks.
+    _BOT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))
+    )))
+    cookies_dir = os.path.join(_BOT_ROOT, "cookies")
     os.makedirs(cookies_dir, exist_ok=True)
     target = os.path.join(cookies_dir, "cookies.txt")
 

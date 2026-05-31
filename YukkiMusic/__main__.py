@@ -92,6 +92,15 @@ async def init():
         )
 
     LOGGER("YukkiMusic").info("Melih Music Bot basariyla baslatildi")
+
+    # Background autoclean — drops downloaded media 60s after creation
+    # so the VPS disk stays small even after thousands of /play calls.
+    try:
+        from YukkiMusic.utils.autoclean import autoclean_loop
+        asyncio.create_task(autoclean_loop())
+    except Exception as e:
+        LOGGER("YukkiMusic").error(f"autoclean failed to start: {e}")
+
     await idle()
 
 

@@ -28,17 +28,22 @@ import yt_dlp
 
 # Optional cookies.txt — auto-detected at *runtime* so /setcookies hot-loads
 # without requiring a restart. Re-scans on every call.
-_COOKIES_CANDIDATES = [
-    os.path.join("cookies", "cookies.txt"),
-    "cookies.txt",
-    os.environ.get("YT_COOKIES", ""),
-]
+# IMPORTANT: paths must be ABSOLUTE so detection works regardless of cwd at
+# call time (e.g. PyTgCalls subprocesses, threads).
+_BOT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _detect_cookies() -> str | None:
-    for p in _COOKIES_CANDIDATES:
+    candidates = [
+        os.path.join(_BOT_ROOT, "cookies", "cookies.txt"),
+        os.path.join(_BOT_ROOT, "cookies.txt"),
+        os.path.join(os.getcwd(), "cookies", "cookies.txt"),
+        os.path.join(os.getcwd(), "cookies.txt"),
+        os.environ.get("YT_COOKIES", ""),
+    ]
+    for p in candidates:
         if p and os.path.isfile(p) and os.path.getsize(p) > 100:
-            return p
+            return os.path.abspath(p)
     return None
 
 
@@ -426,6 +431,14 @@ class YouTubeAPI:
             # while the streaming-URL (-g) path keeps tripping over format
             # selectors. Output: downloads/<id>.<ext>
             cf = _current_cookies()
+            if not cf:
+                # Loud warning so it shows up in journalctl — helps the user
+                # immediately see why YouTube rejects the request.
+                import logging
+                logging.getLogger("YukkiMusic").warning(
+                    "yt-dlp called WITHOUT cookies — YouTube will likely refuse. "
+                    "Run /setcookies in PM to fix."
+                )
             opts = {
                 "format": "bestaudio/best",
                 "outtmpl": "downloads/%(id)s.%(ext)s",
