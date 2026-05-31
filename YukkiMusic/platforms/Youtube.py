@@ -26,14 +26,31 @@ from typing import Union
 
 import yt_dlp
 
-# Optional cookies.txt — auto-detected if present.
-# Order: ./cookies/cookies.txt -> ./cookies.txt -> $YT_COOKIES
+# Optional cookies.txt — auto-detected at *runtime* so /setcookies hot-loads
+# without requiring a restart. Re-scans on every call.
 _COOKIES_CANDIDATES = [
     os.path.join("cookies", "cookies.txt"),
     "cookies.txt",
     os.environ.get("YT_COOKIES", ""),
 ]
-COOKIES_FILE = next((p for p in _COOKIES_CANDIDATES if p and os.path.isfile(p)), None)
+
+
+def _detect_cookies() -> str | None:
+    for p in _COOKIES_CANDIDATES:
+        if p and os.path.isfile(p) and os.path.getsize(p) > 100:
+            return p
+    return None
+
+
+# Backwards-compat constant — still imported by other modules. Lazy-evaluated
+# via _current_cookies() everywhere it matters.
+COOKIES_FILE = _detect_cookies()
+
+
+def _current_cookies() -> str | None:
+    """Always re-detect so a freshly uploaded cookies.txt is picked up
+    without restarting the bot."""
+    return _detect_cookies()
 
 # Common yt-dlp options to bypass YouTube 403/anti-bot:
 # NOTE (2026): mediaconnect + android_music + tv_embedded are the most reliable
@@ -53,19 +70,23 @@ _YDL_BYPASS = {
         }
     },
 }
-if COOKIES_FILE and _USE_COOKIES:
-    _YDL_BYPASS["cookiefile"] = COOKIES_FILE
 
 
 def _ydl_opts(extra):
     o = dict(_YDL_BYPASS)
+    # Dynamic cookies — picks up freshly uploaded cookies.txt
+    cf = _current_cookies()
+    if cf and _USE_COOKIES:
+        o["cookiefile"] = cf
     o.update(extra)
     return o
 
 
 def _cookie_cli_args():
-    """Return CLI args list for yt-dlp -g subprocess calls."""
-    return ["--cookies", COOKIES_FILE] if (COOKIES_FILE and _USE_COOKIES) else []
+    """Return CLI args list for yt-dlp -g subprocess calls. Re-checks
+    cookies file on every call so /setcookies works without restart."""
+    cf = _current_cookies()
+    return ["--cookies", cf] if (cf and _USE_COOKIES) else []
 
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
@@ -290,7 +311,7 @@ class YouTubeAPI:
             link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
-        cookies_arg = f"--cookies {COOKIES_FILE} " if COOKIES_FILE else ""
+        cookies_arg = f"--cookies {_current_cookies()} " if _current_cookies() else ""
         playlist = await shell_cmd(
             f"{YTDLP_BIN} {cookies_arg}-i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
         )
@@ -527,6 +548,33 @@ class YouTubeAPI:
                 downloaded_file = await loop.run_in_executor(None, audio_dl)
                 return downloaded_file, direct
             except Exception as e:
+                # Detect "Sign in to confirm you're not a bot" / cookies issue
+                combined_err = f"{last_err} {e}".lower()
+                cookies_needed = any(s in combined_err for s in [
+                    "sign in to confirm",
+                    "use --cookies",
+                    "cookies-from-browser",
+                    "confirm you",
+                    "not a bot",
+                ])
+                if cookies_needed:
+                    cf_now = _current_cookies()
+                    has_cookies = bool(cf_now and os.path.getsize(cf_now) > 100)
+                    if not has_cookies:
+                        raise Exception(
+                            "YouTube IP'nizi bot olarak işaretledi (datacenter IP).\n"
+                            "ÇÖZÜM: cookies.txt yükleyin.\n"
+                            "1) Chrome'a 'Get cookies.txt LOCALLY' eklentisi kurun\n"
+                            "2) youtube.com'a giriş yapın → eklentiden export\n"
+                            "3) Dosyayı bota PM'den gönderip reply ile /setcookies yazın"
+                        )
+                    else:
+                        raise Exception(
+                            "YouTube cookies geçersiz veya süresi dolmuş.\n"
+                            f"Mevcut dosya: {cf_now} ({os.path.getsize(cf_now)} byte)\n"
+                            "Tarayıcıda youtube.com'da yeniden giriş yapıp "
+                            "cookies.txt'i yeniden export edin ve /setcookies ile yükleyin."
+                        )
                 raise Exception(
                     f"yt-dlp ile ses çekilemedi.\n"
                     f"Son hata: {last_err[-200:]}\n"
