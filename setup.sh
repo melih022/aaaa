@@ -20,6 +20,12 @@ fi
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+# Fix "fatal: detected dubious ownership in repository" — happens when
+# the bot is run as root (via systemd) but the repo is owned by another
+# user (e.g. cloned into /home/google/...). Make this directory safe
+# for every git invocation regardless of user.
+git config --global --add safe.directory "$ROOT" 2>/dev/null || true
+
 # ────────────────────────────────────────────────────────────────────────
 # Banner
 # ────────────────────────────────────────────────────────────────────────
@@ -478,6 +484,9 @@ echo "    /unsetenv KEY                   # .env'den bir alan sil"
 echo "    /update                         # git fetch+reset + restart (GITHUB_TOKEN ile)"
 echo "    /restart                        # botu yeniden başlat"
 echo "    /stop                           # botu tamamen durdur (auto-restart kapalı)"
+echo "    /setcookies                     # cookies.txt yükle (dosyaya reply)"
+echo "    /cookiestatus                   # cookies durumu"
+echo "    /sunucurepo                     # sunucudaki repoyu .zip olarak al"
 echo "    /genstring                      # asistan session üret"
 echo "    /setad <metin>                  # TTS sesli reklam"
 echo "    /setadfile                      # audio'ya reply, set"
