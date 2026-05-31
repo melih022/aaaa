@@ -4,6 +4,7 @@
 
 import asyncio
 import importlib
+import os
 
 from pyrogram import idle
 
@@ -92,6 +93,24 @@ async def init():
         )
 
     LOGGER("YukkiMusic").info("Melih Music Bot basariyla baslatildi")
+
+    # Diagnostic: log cookies status at startup so user sees in journalctl
+    # whether yt-dlp will have cookies available BEFORE the first /play.
+    try:
+        from YukkiMusic.platforms.Youtube import _current_cookies
+        cf = _current_cookies()
+        if cf:
+            LOGGER("YukkiMusic").info(
+                f"YouTube cookies tespit edildi: {cf} "
+                f"({os.path.getsize(cf):,} byte)"
+            )
+        else:
+            LOGGER("YukkiMusic").warning(
+                "YouTube cookies BULUNAMADI. yt-dlp YouTube'a erişemeyecek. "
+                "Bota PM'den /setcookies ile cookies.txt yükleyin."
+            )
+    except Exception as e:
+        LOGGER("YukkiMusic").error(f"cookies status check failed: {e}")
 
     # Background autoclean — drops downloaded media 60s after creation
     # so the VPS disk stays small even after thousands of /play calls.

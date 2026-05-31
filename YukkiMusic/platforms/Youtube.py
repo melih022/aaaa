@@ -126,8 +126,18 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
         "source_address": "0.0.0.0",
         "extractor_args": {"youtube": {"player_client": ["mediaconnect", "android_music", "tv_embedded"]}},
     }
-    if COOKIES_FILE and _USE_COOKIES:
-        opts["cookiefile"] = COOKIES_FILE
+    # Always re-detect cookies — module-level COOKIES_FILE is set at import
+    # time and never updates after /setcookies, which caused ALL searches to
+    # hit YouTube cookie-less.
+    cf = _current_cookies()
+    if cf and _USE_COOKIES:
+        opts["cookiefile"] = cf
+    else:
+        import logging
+        logging.getLogger("YukkiMusic.ytsearch").warning(
+            "yt-dlp search called WITHOUT cookies — YouTube will likely "
+            "block. Upload cookies.txt then /setcookies."
+        )
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(query, download=False)
 
