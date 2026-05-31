@@ -66,7 +66,8 @@ _YDL_BYPASS = {
     "source_address": "0.0.0.0",
     "extractor_args": {
         "youtube": {
-            "player_client": ["mediaconnect", "android_music", "tv_embedded"],
+            # Modern (Feb 2026) client list — handles SABR + format coverage
+            "player_client": ["default", "ios", "mweb", "android_music", "tv_embedded"],
         }
     },
 }
@@ -509,19 +510,30 @@ class YouTubeAPI:
             stream_url = None
             last_err = ""
             attempts = [
-                # 1: mediaconnect + android_music + tv_embedded (the most reliable)
-                [YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best",
+                # 1: most permissive — let yt-dlp choose any audio it can find,
+                # cookies always passed. Modern player_client list (Feb 2026).
+                [YTDLP_BIN, "-g", "-f", "ba/b",
                  "--extractor-args",
-                 "youtube:player_client=mediaconnect,android_music,tv_embedded",
+                 "youtube:player_client=default,ios,mweb,android_music,tv_embedded",
                  "--no-warnings", "--no-call-home", *_cookie_cli_args(),
                  f"{link}"],
-                # 2: web/android (newer)
+                # 2: prefer m4a but accept anything; cookies passed
+                [YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best/best",
+                 "--extractor-args",
+                 "youtube:player_client=mediaconnect,android_music,tv_embedded",
+                 "--no-warnings", *_cookie_cli_args(),
+                 f"{link}"],
+                # 3: ios player client (often has audio when others don't); cookies
                 [YTDLP_BIN, "-g", "-f", "bestaudio/best",
-                 "--extractor-args", "youtube:player_client=web_music,android_vr",
-                 "--no-warnings", f"{link}"],
-                # 3: permissive default
-                [YTDLP_BIN, "-g", "-f", "bestaudio/best",
-                 "--no-warnings", "--no-check-formats", f"{link}"],
+                 "--extractor-args", "youtube:player_client=ios,mweb",
+                 "--no-warnings", *_cookie_cli_args(),
+                 f"{link}"],
+                # 4: last resort — any format, no format check, cookies passed
+                [YTDLP_BIN, "-g", "-f", "ba/b/best",
+                 "--no-warnings", "--no-check-formats",
+                 "--ignore-no-formats-error",
+                 *_cookie_cli_args(),
+                 f"{link}"],
             ]
             for idx, cmd in enumerate(attempts, 1):
                 try:

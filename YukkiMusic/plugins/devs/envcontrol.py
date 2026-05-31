@@ -408,6 +408,68 @@ async def cmd_cookiestatus(client, message: Message):
     )
 
 
+# ---------- /cookietest : verify cookies actually work against YouTube ----------
+
+@app.on_message(filters.command(["cookietest", "ytdebug"]) & sudo_filter & filters.private)
+async def cmd_cookietest(client, message: Message):
+    """Try to fetch a stream URL from a known-good YouTube video to validate
+    that cookies + yt-dlp work end-to-end on this VPS."""
+    status = await message.reply_text("🔍 yt-dlp + cookies testi başlıyor…")
+
+    # "Despacito" — most-viewed video on YouTube, always available
+    test_url = "https://www.youtube.com/watch?v=kJQP7kiw5Fk"
+
+    from YukkiMusic.platforms.Youtube import _current_cookies
+    cf = _current_cookies()
+    cookies_info = f"`{cf}` ({os.path.getsize(cf):,} byte)" if cf else "❌ YOK"
+
+    attempts = [
+        ("ba/b", "default,ios,mweb,android_music,tv_embedded"),
+        ("bestaudio[ext=m4a]/bestaudio/best", "mediaconnect,android_music,tv_embedded"),
+        ("bestaudio/best", "ios,mweb"),
+    ]
+
+    results = [f"📂 cookies: {cookies_info}", ""]
+    success = False
+    for idx, (fmt, clients) in enumerate(attempts, 1):
+        cmd = ["yt-dlp", "-g", "-f", fmt,
+               "--extractor-args", f"youtube:player_client={clients}",
+               "--no-warnings"]
+        if cf:
+            cmd += ["--cookies", cf]
+        cmd.append(test_url)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await proc.communicate()
+            if proc.returncode == 0 and out.strip().startswith(b"http"):
+                results.append(f"✅ Deneme #{idx} (`{fmt}`, `{clients}`): **OK**")
+                success = True
+                break
+            else:
+                err_short = (err.decode(errors="replace") or "boş")[-200:].strip()
+                results.append(f"❌ Deneme #{idx} (`{fmt}`):\n   `{err_short}`")
+        except Exception as e:
+            results.append(f"❌ Deneme #{idx}: `{type(e).__name__}: {e}`")
+
+    results.append("")
+    if success:
+        results.append("✅ **Sonuç: yt-dlp + cookies çalışıyor.** /play denemeye hazır.")
+    else:
+        results.append(
+            "❌ **Sonuç: Hiçbir strateji çalışmadı.**\n"
+            "• Cookies süresi dolmuş olabilir → yenile, /setcookies ile yükle\n"
+            "• Veya VPS IP'si tamamen banlanmış → IP/Proxy değişimi gerekebilir"
+        )
+    text = "\n".join(results)
+    if len(text) > 3800:
+        text = text[:3800] + "\n…(kesildi)"
+    await status.edit_text(text)
+
+
 # ---------- /sunucurepo : send the install folder as a zip ----------
 
 @app.on_message(filters.command(["sunucurepo", "serverrepo", "getrepo"]) & sudo_filter & filters.private)
