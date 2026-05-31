@@ -420,15 +420,27 @@ class YouTubeAPI:
         loop = asyncio.get_running_loop()
 
         def audio_dl():
+            # Simple, reliable yt-dlp — matches what the working reference
+            # repo (melih022/google) does: NO player_client arg, just plain
+            # bestaudio + cookies. With valid cookies this almost always works
+            # while the streaming-URL (-g) path keeps tripping over format
+            # selectors. Output: downloads/<id>.<ext>
+            cf = _current_cookies()
             opts = {
-                "format": "bestaudio[ext=m4a]/bestaudio/best",
+                "format": "bestaudio/best",
                 "outtmpl": "downloads/%(id)s.%(ext)s",
-                "geo_bypass": True, "nocheckcertificate": True,
-                "quiet": True, "no_warnings": True,
-                "extractor_args": {"youtube": {"player_client": ["mediaconnect", "android_music", "tv_embedded"]}},
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "quiet": True,
+                "no_warnings": True,
+                "retries": 5,
+                "fragment_retries": 5,
+                "concurrent_fragment_downloads": 4,
             }
-            x = yt_dlp.YoutubeDL(_ydl_opts(opts))
-            info = x.extract_info(link, False)
+            if cf:
+                opts["cookiefile"] = cf
+            x = yt_dlp.YoutubeDL(opts)
+            info = x.extract_info(link, download=False)
             xyz = os.path.join("downloads", f"{info['id']}.{info['ext']}")
             if os.path.exists(xyz):
                 return xyz
@@ -505,30 +517,41 @@ class YouTubeAPI:
                     return
             return downloaded_file, direct
         else:
-            # Audio: direct streaming URL via yt-dlp -g (no disk write).
-            # Try multiple strategies; log stderr if everything fails.
+            # AUDIO PATH — Reordered Feb 2026 (per user request):
+            # 1) Try direct file download first (simple yt-dlp + cookies = most
+            #    reliable; matches the working reference repo melih022/google).
+            # 2) Only if download fails, fall back to -g streaming URL with
+            #    multiple format/client strategies.
+            try:
+                downloaded_file = await loop.run_in_executor(None, audio_dl)
+                if downloaded_file and os.path.exists(downloaded_file):
+                    return downloaded_file, True
+            except Exception as e:
+                last_err = f"audio_dl: {type(e).__name__}: {str(e)[:300]}"
+            else:
+                last_err = "audio_dl returned no file"
+
+            # Streaming-URL fallback chain
             stream_url = None
-            last_err = ""
             attempts = [
-                # 1: most permissive — let yt-dlp choose any audio it can find,
-                # cookies always passed. Modern player_client list (Feb 2026).
+                # 1: most permissive — let yt-dlp choose any audio
                 [YTDLP_BIN, "-g", "-f", "ba/b",
                  "--extractor-args",
                  "youtube:player_client=default,ios,mweb,android_music,tv_embedded",
                  "--no-warnings", "--no-call-home", *_cookie_cli_args(),
                  f"{link}"],
-                # 2: prefer m4a but accept anything; cookies passed
+                # 2: prefer m4a but accept anything
                 [YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best/best",
                  "--extractor-args",
                  "youtube:player_client=mediaconnect,android_music,tv_embedded",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
-                # 3: ios player client (often has audio when others don't); cookies
+                # 3: ios player client
                 [YTDLP_BIN, "-g", "-f", "bestaudio/best",
                  "--extractor-args", "youtube:player_client=ios,mweb",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
-                # 4: last resort — any format, no format check, cookies passed
+                # 4: last resort
                 [YTDLP_BIN, "-g", "-f", "ba/b/best",
                  "--no-warnings", "--no-check-formats",
                  "--ignore-no-formats-error",
@@ -554,43 +577,37 @@ class YouTubeAPI:
                     continue
             if stream_url:
                 return stream_url, None
-            # Audio_dl fallback (only succeeds if yt-dlp can really download)
-            try:
-                direct = True
-                downloaded_file = await loop.run_in_executor(None, audio_dl)
-                return downloaded_file, direct
-            except Exception as e:
-                # Detect "Sign in to confirm you're not a bot" / cookies issue
-                combined_err = f"{last_err} {e}".lower()
-                cookies_needed = any(s in combined_err for s in [
-                    "sign in to confirm",
-                    "use --cookies",
-                    "cookies-from-browser",
-                    "confirm you",
-                    "not a bot",
-                ])
-                if cookies_needed:
-                    cf_now = _current_cookies()
-                    has_cookies = bool(cf_now and os.path.getsize(cf_now) > 100)
-                    if not has_cookies:
-                        raise Exception(
-                            "YouTube IP'nizi bot olarak işaretledi (datacenter IP).\n"
-                            "ÇÖZÜM: cookies.txt yükleyin.\n"
-                            "1) Chrome'a 'Get cookies.txt LOCALLY' eklentisi kurun\n"
-                            "2) youtube.com'a giriş yapın → eklentiden export\n"
-                            "3) Dosyayı bota PM'den gönderip reply ile /setcookies yazın"
-                        )
-                    else:
-                        raise Exception(
-                            "YouTube cookies geçersiz veya süresi dolmuş.\n"
-                            f"Mevcut dosya: {cf_now} ({os.path.getsize(cf_now)} byte)\n"
-                            "Tarayıcıda youtube.com'da yeniden giriş yapıp "
-                            "cookies.txt'i yeniden export edin ve /setcookies ile yükleyin."
-                        )
-                raise Exception(
-                    f"yt-dlp ile ses çekilemedi.\n"
-                    f"Son hata: {last_err[-200:]}\n"
-                    f"Download fallback: {type(e).__name__}: {str(e)[:120]}\n"
-                    f"İpucu: Yaş kısıtlı/VEVO videolar genelde başarısız. "
-                    f"Şarkı adına 'lyrics' veya 'audio' ekleyerek tekrar deneyin."
-                )
+
+            # Everything failed — produce a clear error
+            combined_err = last_err.lower()
+            cookies_needed = any(s in combined_err for s in [
+                "sign in to confirm",
+                "use --cookies",
+                "cookies-from-browser",
+                "confirm you",
+                "not a bot",
+            ])
+            if cookies_needed:
+                cf_now = _current_cookies()
+                has_cookies = bool(cf_now and os.path.getsize(cf_now) > 100)
+                if not has_cookies:
+                    raise Exception(
+                        "YouTube IP'nizi bot olarak işaretledi (datacenter IP).\n"
+                        "ÇÖZÜM: cookies.txt yükleyin.\n"
+                        "1) Chrome'a 'Get cookies.txt LOCALLY' eklentisi kurun\n"
+                        "2) youtube.com'a giriş yapın → eklentiden export\n"
+                        "3) Dosyayı bota PM'den gönderip reply ile /setcookies yazın"
+                    )
+                else:
+                    raise Exception(
+                        "YouTube cookies geçersiz veya süresi dolmuş.\n"
+                        f"Mevcut dosya: {cf_now} ({os.path.getsize(cf_now)} byte)\n"
+                        "Tarayıcıda youtube.com'da yeniden giriş yapıp "
+                        "cookies.txt'i yeniden export edin ve /setcookies ile yükleyin."
+                    )
+            raise Exception(
+                f"yt-dlp ile ses çekilemedi.\n"
+                f"Son hata: {last_err[-200:]}\n"
+                f"İpucu: Yaş kısıtlı/VEVO videolar genelde başarısız. "
+                f"Şarkı adına 'lyrics' veya 'audio' ekleyerek tekrar deneyin."
+            )
