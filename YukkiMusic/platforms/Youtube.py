@@ -51,25 +51,28 @@ def _detect_cookies() -> str | None:
 
 def _cookies_look_valid(path: str | None) -> bool:
     """Heuristic check: real YouTube login cookies should contain
-    SAPISID + __Secure-3PAPISID + at least ~3KB of content. A small file
-    (<3 KB) or one missing these markers is usually a partial export
-    that makes yt-dlp send 'authenticated' requests with no real session
-    → YouTube responds with 'Sign in to confirm you're not a bot'.
-    Returning False makes the caller fall back to cookie-less mode."""
+    SAPISID + __Secure-3PAPISID. If both critical cookies are present
+    we treat the file as valid regardless of size (some valid exports
+    are 2-3 KB). A small file (<1.5 KB) AND missing markers is
+    considered partial and skipped to avoid the 'Sign in to confirm
+    you're not a bot' trap that partial cookies trigger."""
     if not path:
         return False
     try:
         size = os.path.getsize(path)
-        if size < 3000:
-            return False
         with open(path, "r", errors="replace") as f:
-            text = f.read(60000)
+            text = f.read(80000)
         text_l = text.lower()
-        has_critical = (
-            "sapisid" in text_l
-            and ("__secure-3papisid" in text_l or "__secure-1papisid" in text_l)
+        has_sapisid = "sapisid" in text_l
+        has_secure  = (
+            "__secure-3papisid" in text_l
+            or "__secure-1papisid" in text_l
         )
-        return has_critical
+        # If both critical markers are present → valid regardless of size
+        if has_sapisid and has_secure:
+            return True
+        # Otherwise need a reasonably-large file
+        return size >= 3000 and has_sapisid
     except Exception:
         return False
 

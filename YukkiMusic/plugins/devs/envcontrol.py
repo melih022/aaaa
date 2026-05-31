@@ -412,7 +412,7 @@ async def cmd_cookiestatus(client, message: Message):
         yt_lines = 0
         has_sapisid = has_secure = has_login = False
 
-    quality_ok = has_sapisid and has_secure and size >= 3000
+    quality_ok = has_sapisid and has_secure
 
     txt = (
         f"{'✅' if quality_ok else '⚠️'} Cookies durumu\n"
