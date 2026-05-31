@@ -424,7 +424,7 @@ async def cmd_cookietest(client, message: Message):
     # "Despacito" — most-viewed video on YouTube, always available
     test_url = "https://www.youtube.com/watch?v=kJQP7kiw5Fk"
 
-    from YukkiMusic.platforms.Youtube import _current_cookies
+    from YukkiMusic.platforms.Youtube import _current_cookies, YTDLP_BIN
     cf = _current_cookies()
     cookies_info = f"`{cf}` ({os.path.getsize(cf):,} byte)" if cf else "❌ YOK"
 
@@ -437,7 +437,7 @@ async def cmd_cookietest(client, message: Message):
     results = [f"📂 cookies: {cookies_info}", ""]
     success = False
     for idx, (fmt, clients) in enumerate(attempts, 1):
-        cmd = ["yt-dlp", "-g", "-f", fmt,
+        cmd = [*YTDLP_BIN, "-g", "-f", fmt,
                "--extractor-args", f"youtube:player_client={clients}",
                "--no-warnings"]
         if cf:

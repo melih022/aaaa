@@ -264,6 +264,14 @@ pip uninstall -y pyrogram >/dev/null 2>&1 || true
 pip install --force-reinstall "kurigram>=2.2.23" --no-deps >/dev/null
 pip install --upgrade "py-tgcalls>=2.2.12" "yt-dlp>=2026.3.17" "lyricsgenius" >/dev/null
 
+# Verify yt-dlp Python module is importable (we now invoke it as `python -m yt_dlp`,
+# not via the CLI script, so PATH issues no longer matter).
+if ! python3 -c "import yt_dlp" 2>/dev/null; then
+  err "yt-dlp Python modülü yüklenememiş! Kurulum başarısız."
+  exit 1
+fi
+log "yt-dlp Python modülü doğrulandı: $(python3 -c 'import yt_dlp; print(yt_dlp.version.__version__)')"
+
 # pyrogram.emoji stub (pykeyboard'un bayrak emojileri için gerekli)
 PY_EMOJI=$(python3 - <<'PYEOF'
 import pyrogram, os

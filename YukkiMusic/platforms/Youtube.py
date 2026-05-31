@@ -7,20 +7,22 @@ import os
 import shutil
 import sys
 
-# Resolve the yt-dlp binary path once.
-# Strategy: first try the venv adjacent to sys.executable (works under
-# systemd/supervisor where PATH is minimal), then fall back to PATH lookup,
-# then last-resort literal "yt-dlp".
-def _resolve_ytdlp_bin():
-    venv_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
-    if os.path.isfile(venv_bin) and os.access(venv_bin, os.X_OK):
-        return venv_bin
-    on_path = shutil.which("yt-dlp")
-    if on_path:
-        return on_path
-    return "yt-dlp"  # may fail loudly with FileNotFoundError
+# Resolve the yt-dlp invocation once.
+# 2026 fix: Always use `[sys.executable, "-m", "yt_dlp"]` because:
+#   1. systemd/supervisor strips PATH → literal "yt-dlp" lookup fails
+#   2. `pip install yt-dlp` sometimes does NOT create the `yt-dlp` script
+#      in venv/bin (depends on installer version), causing FileNotFoundError
+#   3. Running the Python module is guaranteed to work whenever `import yt_dlp`
+#      succeeds (which it does — see `import yt_dlp` below)
+def _resolve_ytdlp_cmd():
+    # Prefer Python module invocation (always works under systemd).
+    return [sys.executable, "-m", "yt_dlp"]
 
-YTDLP_BIN = _resolve_ytdlp_bin()
+# YTDLP_CMD is a LIST (e.g. ["/path/to/python3", "-m", "yt_dlp"]) — use with
+# `*YTDLP_CMD` when building subprocess argv. Backwards-compat alias YTDLP_BIN
+# kept as a list too (callers spread it with `*`).
+YTDLP_CMD = _resolve_ytdlp_cmd()
+YTDLP_BIN = YTDLP_CMD  # legacy alias — already a list, callers must use *YTDLP_BIN
 import re
 from typing import Union
 
@@ -306,7 +308,7 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         proc = await asyncio.create_subprocess_exec(
-            YTDLP_BIN, "-g", "-f",
+            *YTDLP_BIN, "-g", "-f",
             "best[height<=?720][width<=?1280]",
             "--extractor-args", "youtube:player_client=mediaconnect,android_music,tv_embedded",
             "--geo-bypass",
@@ -327,9 +329,11 @@ class YouTubeAPI:
             link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
-        cookies_arg = f"--cookies {_current_cookies()} " if _current_cookies() else ""
+        import shlex
+        cookies_arg = f"--cookies {shlex.quote(_current_cookies())} " if _current_cookies() else ""
+        ytdlp_str = " ".join(shlex.quote(x) for x in YTDLP_BIN)
         playlist = await shell_cmd(
-            f"{YTDLP_BIN} {cookies_arg}-i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
+            f"{ytdlp_str} {cookies_arg}-i --get-id --flat-playlist --playlist-end {limit} --skip-download {link}"
         )
         try:
             result = [x for x in playlist.split("\n") if x]
@@ -523,7 +527,7 @@ class YouTubeAPI:
                 downloaded_file = await loop.run_in_executor(None, video_dl)
             else:
                 proc = await asyncio.create_subprocess_exec(
-                    YTDLP_BIN, "-g", "-f",
+                    *YTDLP_BIN, "-g", "-f",
                     "best[height<=?720][width<=?1280]",
                     "--extractor-args", "youtube:player_client=mediaconnect,android_music,tv_embedded",
                     "--no-warnings",
@@ -558,24 +562,24 @@ class YouTubeAPI:
             stream_url = None
             attempts = [
                 # 1: most permissive — let yt-dlp choose any audio
-                [YTDLP_BIN, "-g", "-f", "ba/b",
+                [*YTDLP_BIN, "-g", "-f", "ba/b",
                  "--extractor-args",
                  "youtube:player_client=default,ios,mweb,android_music,tv_embedded",
                  "--no-warnings", "--no-call-home", *_cookie_cli_args(),
                  f"{link}"],
                 # 2: prefer m4a but accept anything
-                [YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best/best",
+                [*YTDLP_BIN, "-g", "-f", "bestaudio[ext=m4a]/bestaudio/best/best",
                  "--extractor-args",
                  "youtube:player_client=mediaconnect,android_music,tv_embedded",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
                 # 3: ios player client
-                [YTDLP_BIN, "-g", "-f", "bestaudio/best",
+                [*YTDLP_BIN, "-g", "-f", "bestaudio/best",
                  "--extractor-args", "youtube:player_client=ios,mweb",
                  "--no-warnings", *_cookie_cli_args(),
                  f"{link}"],
                 # 4: last resort
-                [YTDLP_BIN, "-g", "-f", "ba/b/best",
+                [*YTDLP_BIN, "-g", "-f", "ba/b/best",
                  "--no-warnings", "--no-check-formats",
                  "--ignore-no-formats-error",
                  *_cookie_cli_args(),
