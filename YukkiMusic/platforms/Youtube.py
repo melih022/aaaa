@@ -144,40 +144,90 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
     """Search YouTube via yt-dlp. Returns dict with 'entries'.
     - If query is a URL, fetches metadata directly.
     - Otherwise prefixes with ytsearchN: to force a YouTube search.
+
+    2026-06: rotates through Webshare proxies on bot-check failures
+    before giving up. Falls back to direct connection as last resort.
     """
     # Detect URL vs search query
     is_url = bool(re.match(r"^https?://", query))
     if not is_url:
         # Force YouTube search regardless of default_search
         query = f"ytsearch{max(1, limit)}:{query}"
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "format": "bestaudio/best",
-        # For search we keep extract_flat=False so yt-dlp resolves each entry.
-        # extract_flat="in_playlist" returns shallow URLs only.
-        "extract_flat": "in_playlist" if flat else False,
-        "geo_bypass": True,
-        "geo_bypass_country": "US",
-        "source_address": "0.0.0.0",
-        "extractor_args": {"youtube": {"player_client": ["mediaconnect", "android_music", "tv_embedded"]}},
-    }
-    # Always re-detect cookies — module-level COOKIES_FILE is set at import
-    # time and never updates after /setcookies, which caused ALL searches to
-    # hit YouTube cookie-less.
-    cf = _current_cookies()
-    if cf and _USE_COOKIES:
-        opts["cookiefile"] = cf
-    else:
-        import logging
-        logging.getLogger("YukkiMusic.ytsearch").warning(
-            "yt-dlp search called WITHOUT cookies — YouTube will likely "
-            "block. Upload cookies.txt then /setcookies."
-        )
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(query, download=False)
+
+    def _build_opts(proxy_url=None):
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": True,
+            "format": "bestaudio/best",
+            "extract_flat": "in_playlist" if flat else False,
+            "geo_bypass": True,
+            "geo_bypass_country": "US",
+            "source_address": "0.0.0.0",
+            "extractor_args": {
+                "youtube": {
+                    "player_client": [
+                        "default", "ios", "mweb",
+                        "android_music", "tv_embedded",
+                    ],
+                },
+            },
+        }
+        cf = _current_cookies()
+        if cf and _USE_COOKIES:
+            opts["cookiefile"] = cf
+        if proxy_url:
+            opts["proxy"] = proxy_url
+        return opts
+
+    import logging
+    log = logging.getLogger("YukkiMusic.ytsearch")
+
+    # Try proxies first, then direct
+    try:
+        from YukkiMusic.utils import proxy_manager as _pm
+    except Exception:
+        _pm = None
+
+    last_exc: Exception | None = None
+    proxy_attempts = 3 if (_pm and _pm.is_enabled()) else 0
+    tried_proxies: set[str] = set()
+
+    for attempt in range(proxy_attempts + 1):  # +1 for the final direct attempt
+        current_proxy = None
+        if attempt < proxy_attempts and _pm and _pm.is_enabled():
+            for _ in range(5):
+                candidate = _pm.get_proxy()
+                if not candidate:
+                    break
+                if candidate not in tried_proxies:
+                    current_proxy = candidate
+                    tried_proxies.add(candidate)
+                    break
+        # if no proxy this attempt → direct connection
+        opts = _build_opts(proxy_url=current_proxy)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(query, download=False)
+        except Exception as e:
+            last_exc = e
+            msg = str(e)
+            label = (f"proxy {current_proxy.split('@')[-1]}"
+                     if current_proxy else "direct")
+            if current_proxy and _pm:
+                if _pm.is_quota_error(msg):
+                    _pm.mark_quota_exceeded("ytsearch quota")
+                    _pm.schedule_quota_notice()
+                elif _pm.is_proxy_connection_error(msg) or "sign in to confirm" in msg.lower():
+                    _pm.mark_bad(current_proxy)
+            log.warning(f"ytsearch via {label} failed: {type(e).__name__}: {msg[:160]}")
+            continue
+
+    # All attempts exhausted
+    if last_exc:
+        raise last_exc
+    return None
 
 
 async def _ytsearch(query: str, limit: int = 1):
