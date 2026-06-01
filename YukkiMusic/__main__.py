@@ -138,6 +138,22 @@ async def init():
     except Exception as e:
         LOGGER("YukkiMusic").warning(f"Webshare proxy init failed: {e}")
 
+    # Initialise YouTube Data API v3 (if YOUTUBE_API_KEY set in .env).
+    # Used for the search step → bypasses yt-dlp's bot-check for search.
+    try:
+        from YukkiMusic.utils import youtube_api
+        youtube_api.configure(os.environ.get("YOUTUBE_API_KEY", ""))
+        if youtube_api.is_enabled():
+            LOGGER("YukkiMusic").info(
+                "YouTube Data API: ✅ aktif (arama API üzerinden)"
+            )
+        else:
+            LOGGER("YukkiMusic").info(
+                "YouTube Data API: kapalı (YOUTUBE_API_KEY yok) — arama yt-dlp ile"
+            )
+    except Exception as e:
+        LOGGER("YukkiMusic").warning(f"YT Data API init failed: {e}")
+
     await idle()
 
 

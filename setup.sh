@@ -402,6 +402,10 @@ WEBSHARE_LINE=$(prompt_var "WEBSHARE_API_KEY" \
   "9) ${YELLOW}WEBSHARE_API_KEY${NC} (opsiyonel) — Webshare proxy hizmeti API key. YouTube bot-check'lerini bypass etmek için. https://dashboard.webshare.io/api/keys → 'Generate API Key'. Boş bırakırsanız proxy kullanılmaz." \
   "" "y")
 
+YT_API_LINE=$(prompt_var "YOUTUBE_API_KEY" \
+  "10) ${YELLOW}YOUTUBE_API_KEY${NC} (opsiyonel — ÖNERİLİR) — YouTube Data API v3 key. Arama adımını resmi API ile yapar, bot-check yemekten kurtarır. Ücretsiz 10,000 birim/gün = ~100 arama (cache ile çok daha fazla). https://console.cloud.google.com → APIs & Services → 'YouTube Data API v3' enable → Credentials → Create API key." \
+  "" "y")
+
 cat > "$ENV_FILE" <<EOF
 ${API_ID_LINE}
 ${API_HASH_LINE}
@@ -413,6 +417,7 @@ ${OWNER_ID_LINE}
 ${STRING_LINE}
 ${GH_TOKEN_LINE}
 ${WEBSHARE_LINE}
+${YT_API_LINE}
 DURATION_LIMIT=60
 SONG_DOWNLOAD_DURATION_LIMIT=180
 VIDEO_STREAM_LIMIT=3

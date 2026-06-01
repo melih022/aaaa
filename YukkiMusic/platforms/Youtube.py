@@ -232,7 +232,11 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
 
 async def _ytsearch(query: str, limit: int = 1):
     """Search YouTube with in-memory LRU cache (30 min TTL).
-    Repeated searches return INSTANTLY from cache."""
+    Repeated searches return INSTANTLY from cache.
+
+    2026-06: tries YouTube Data API v3 FIRST (if YOUTUBE_API_KEY set).
+    The official API bypasses yt-dlp's bot-check for the search step.
+    Falls back to yt-dlp (via _ytdl_extract) on quota/error."""
     loop = asyncio.get_running_loop()
 
     # Cache check — same query → return cached result
@@ -242,6 +246,62 @@ async def _ytsearch(query: str, limit: int = 1):
     if cached is not None:
         return cached
 
+    # --- Strategy 1: YouTube Data API v3 (cheap, reliable, no bot-check) ---
+    try:
+        from YukkiMusic.utils import youtube_api as _yt_api
+    except Exception:
+        _yt_api = None
+
+    if _yt_api and _yt_api.is_enabled():
+        # If query is a YouTube URL with video ID, do a direct details lookup
+        import re as _re
+        url_match = _re.search(r"(?:v=|youtu\.be/|/shorts/)([\w-]{11})", query)
+        try:
+            if url_match:
+                vid = url_match.group(1)
+                api_item = await loop.run_in_executor(None, _yt_api.video_details, vid)
+                if api_item:
+                    api_items = [api_item]
+                else:
+                    api_items = []
+            else:
+                api_items = await loop.run_in_executor(None, _yt_api.search, query, limit)
+        except Exception as e:
+            import logging
+            logging.getLogger("YukkiMusic.ytsearch").warning(
+                f"YT API search failed: {type(e).__name__}: {e}"
+            )
+            api_items = []
+
+        if api_items:
+            # Translate to the format the rest of the bot expects
+            results = []
+            for it in api_items:
+                results.append({
+                    "id": it["id"],
+                    "title": it["title"],
+                    "duration": it["duration"],
+                    "link": it["link"],
+                    "thumbnails": [{"url": it["thumbnail"]}],
+                    "viewCount": {"short": ""},
+                    "channel": {"name": it["channel"], "link": ""},
+                    "publishedTime": "",
+                })
+            yt_cache.search_cache.set(cache_key, results)
+            # Notify owner once if quota recently hit
+            try:
+                _yt_api.schedule_quota_notice()
+            except Exception:
+                pass
+            return results
+        # Notify if quota just got hit
+        try:
+            _yt_api.schedule_quota_notice()
+        except Exception:
+            pass
+        # else: fall through to yt-dlp
+
+    # --- Strategy 2: yt-dlp fallback ---
     def _run():
         try:
             data = _ytdl_extract(query, limit=limit, flat=True)
