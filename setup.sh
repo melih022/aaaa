@@ -398,6 +398,10 @@ GH_TOKEN_LINE=$(prompt_var "GITHUB_TOKEN" \
   "8) ${YELLOW}GITHUB_TOKEN${NC} (opsiyonel) — /update komutuyla bot içinden 'git pull' yapabilmek için. Boş bırakırsanız da bot çalışır." \
   "" "y")
 
+WEBSHARE_LINE=$(prompt_var "WEBSHARE_API_KEY" \
+  "9) ${YELLOW}WEBSHARE_API_KEY${NC} (opsiyonel) — Webshare proxy hizmeti API key. YouTube bot-check'lerini bypass etmek için. https://dashboard.webshare.io/api/keys → 'Generate API Key'. Boş bırakırsanız proxy kullanılmaz." \
+  "" "y")
+
 cat > "$ENV_FILE" <<EOF
 ${API_ID_LINE}
 ${API_HASH_LINE}
@@ -408,6 +412,7 @@ MUSIC_BOT_NAME=Melih Music Bot
 ${OWNER_ID_LINE}
 ${STRING_LINE}
 ${GH_TOKEN_LINE}
+${WEBSHARE_LINE}
 DURATION_LIMIT=60
 SONG_DOWNLOAD_DURATION_LIMIT=180
 VIDEO_STREAM_LIMIT=3

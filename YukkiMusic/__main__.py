@@ -120,6 +120,24 @@ async def init():
     except Exception as e:
         LOGGER("YukkiMusic").error(f"autoclean failed to start: {e}")
 
+    # Initialise Webshare proxy pool (if WEBSHARE_API_KEY set in .env).
+    # Fetches the proxy list on startup so the first /play already has
+    # proxies available.
+    try:
+        from YukkiMusic.utils import proxy_manager
+        proxy_manager.init(os.environ.get("WEBSHARE_API_KEY", ""))
+        st = proxy_manager.stats()
+        if st["enabled"]:
+            LOGGER("YukkiMusic").info(
+                f"Webshare proxy: ✅ {st['total']} proxy yüklendi"
+            )
+        else:
+            LOGGER("YukkiMusic").info(
+                "Webshare proxy: kapalı (WEBSHARE_API_KEY yok)"
+            )
+    except Exception as e:
+        LOGGER("YukkiMusic").warning(f"Webshare proxy init failed: {e}")
+
     await idle()
 
 

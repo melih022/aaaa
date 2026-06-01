@@ -500,7 +500,8 @@ class YouTubeAPI:
                     "via /setcookies for best results."
                 )
 
-            def _make_opts(player_clients, player_skip=None, cookiefile=None):
+            def _make_opts(player_clients, player_skip=None, cookiefile=None,
+                           proxy_url=None):
                 youtube_args = {"player_client": list(player_clients)}
                 if player_skip:
                     youtube_args["player_skip"] = list(player_skip)
@@ -518,6 +519,8 @@ class YouTubeAPI:
                 }
                 if cookiefile:
                     opts["cookiefile"] = cookiefile
+                if proxy_url:
+                    opts["proxy"] = proxy_url
                 return opts
 
             def _try(opts):
@@ -563,23 +566,81 @@ class YouTubeAPI:
                  ["android_vr"], None, False),
             ])
 
+            # Import proxy manager (lazy to avoid circular imports at module load)
+            try:
+                from YukkiMusic.utils import proxy_manager as _pm
+            except Exception:
+                _pm = None  # proxy mode unavailable
+
             last_exc = None
             for label, clients, skip, use_cookies in strategies:
-                opts = _make_opts(
-                    clients, skip,
-                    cookiefile=(cf if (use_cookies and cookies_present) else None),
-                )
-                try:
-                    result = _try(opts)
-                    if result and os.path.exists(result):
-                        log.info(f"audio_dl SUCCESS via: {label}")
-                        return result
-                except Exception as e:
-                    last_exc = e
-                    msg = str(e)[:200]
-                    log.warning(f"audio_dl strategy '{label}' failed: "
-                                f"{type(e).__name__}: {msg}")
-                    continue
+                # Try with each strategy up to 3 times, rotating proxy on
+                # failure (per user-choice: rotate on error only). Last
+                # attempt always runs WITHOUT proxy (final fallback).
+                proxy_attempts = 3 if (_pm and _pm.is_enabled()) else 1
+                current_proxy = None
+                tried_proxies: set[str] = set()
+                strategy_success = False
+
+                for attempt in range(proxy_attempts):
+                    # Pick proxy for this attempt (None on last try when
+                    # proxies exhausted, to fall back to direct connection)
+                    if _pm and _pm.is_enabled() and attempt < proxy_attempts - 1:
+                        # Pick a proxy we haven't tried yet
+                        for _ in range(5):
+                            candidate = _pm.get_proxy()
+                            if not candidate:
+                                current_proxy = None
+                                break
+                            if candidate not in tried_proxies:
+                                current_proxy = candidate
+                                tried_proxies.add(candidate)
+                                break
+                        else:
+                            current_proxy = None
+                    else:
+                        current_proxy = None
+
+                    proxy_label = (f" via proxy {current_proxy.split('@')[-1]}"
+                                   if current_proxy else " direct")
+                    opts = _make_opts(
+                        clients, skip,
+                        cookiefile=(cf if (use_cookies and cookies_present) else None),
+                        proxy_url=current_proxy,
+                    )
+                    try:
+                        result = _try(opts)
+                        if result and os.path.exists(result):
+                            log.info(f"audio_dl SUCCESS via: {label}{proxy_label}")
+                            strategy_success = True
+                            return result
+                    except Exception as e:
+                        last_exc = e
+                        msg = str(e)
+                        log.warning(
+                            f"audio_dl strategy '{label}'{proxy_label} failed: "
+                            f"{type(e).__name__}: {msg[:180]}"
+                        )
+                        # Classify the error to decide what to do next
+                        if _pm and current_proxy:
+                            if _pm.is_quota_error(msg):
+                                _pm.mark_quota_exceeded("yt-dlp reported quota")
+                                _pm.schedule_quota_notice()
+                                current_proxy = None
+                                break  # don't keep retrying proxies
+                            elif _pm.is_proxy_connection_error(msg):
+                                _pm.mark_bad(current_proxy)
+                                # try next proxy
+                                continue
+                            elif "sign in to confirm" in msg.lower():
+                                # YouTube rejected this proxy IP too — mark bad
+                                _pm.mark_bad(current_proxy)
+                                continue
+                        # Non-proxy error — break out and move to next strategy
+                        break
+
+                if strategy_success:
+                    return  # unreachable but for clarity
 
             # All strategies exhausted — re-raise the last exception so the
             # outer code can decide whether to try the -g streaming path.
