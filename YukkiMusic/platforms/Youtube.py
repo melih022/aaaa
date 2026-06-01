@@ -857,19 +857,29 @@ class YouTubeAPI:
             import logging as _log_v
             _vlog = _log_v.getLogger("YukkiMusic.voynat")
 
+            # Video format selectors — ordered most→least specific.
+            # Many YouTube videos no longer have a single-file format under
+            # 720p (they use DASH = separate video+audio). So we use very
+            # permissive selectors that fall back to ANY playable format,
+            # and as a LAST RESORT just play audio (better than nothing).
             v_strategies = [
-                # 1: CLASSIC reliable combo
-                ["best[height<=?720][width<=?1280]",
+                # 1: Prefer combined ≤720p mp4 (best for tgcalls)
+                ["best[height<=?720][ext=mp4]/best[height<=?720]/best[ext=mp4]/best",
                  "youtube:player_client=default,ios,mweb,android_music,tv_embedded"],
-                # 2: mediaconnect (original)
-                ["best[height<=?720][width<=?1280]",
+                # 2: same selectors, alternate client
+                ["best[height<=?720][ext=mp4]/best[height<=?720]/best[ext=mp4]/best",
                  "youtube:player_client=mediaconnect,android_music,tv_embedded"],
-                # 3: more permissive format selector
-                ["best",
+                # 3: very permissive — any 'best' single file
+                ["best/b",
                  "youtube:player_client=default,ios,mweb,android_music,tv_embedded"],
                 # 4: ios+mweb minimal
-                ["b",
+                ["best/b",
                  "youtube:player_client=ios,mweb"],
+                # 5: AUDIO FALLBACK — if no playable video format available
+                # for this video from this IP, at least play the audio so
+                # the user gets something instead of an error.
+                ["bestaudio/best",
+                 "youtube:player_client=default,ios,mweb,android_music,tv_embedded"],
             ]
 
             downloaded_file = None
@@ -930,7 +940,10 @@ class YouTubeAPI:
                             _pm_v.mark_quota_exceeded("voynat quota")
                             _pm_v.schedule_quota_notice()
                         elif (_pm_v.is_proxy_connection_error(low)
-                              or "sign in to confirm" in low):
+                              or "sign in to confirm" in low
+                              or "video unavailable" in low
+                              or "content isn" in low):
+                            # Region/IP-block also marks proxy bad
                             _pm_v.mark_bad(cur_proxy)
                 if downloaded_file:
                     break
