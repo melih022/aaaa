@@ -840,24 +840,109 @@ class YouTubeAPI:
         if video:
             if await is_on_off(config.YTDOWNLOADER):
                 direct = True
-                downloaded_file = await loop.run_in_executor(None, video_dl)
-            else:
-                proc = await asyncio.create_subprocess_exec(
-                    *YTDLP_BIN, "-g", "-f",
-                    "best[height<=?720][width<=?1280]",
-                    "--extractor-args", "youtube:player_client=mediaconnect,android_music,tv_embedded",
-                    "--no-warnings",
-                    *_cookie_cli_args(),
-                    f"{link}",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                try:
+                    downloaded_file = await loop.run_in_executor(None, video_dl)
+                except Exception as e:
+                    raise Exception(f"video_dl failed: {type(e).__name__}: {str(e)[:200]}")
+                if not downloaded_file or not os.path.exists(downloaded_file):
+                    raise Exception("video_dl: file not produced")
+                return downloaded_file, direct
+
+            # Streaming URL path for video — same multi-strategy approach
+            # as audio fallback chain. With proxy rotation + cookies.
+            try:
+                from YukkiMusic.utils import proxy_manager as _pm_v
+            except Exception:
+                _pm_v = None
+            import logging as _log_v
+            _vlog = _log_v.getLogger("YukkiMusic.voynat")
+
+            v_strategies = [
+                # 1: CLASSIC reliable combo
+                ["best[height<=?720][width<=?1280]",
+                 "youtube:player_client=default,ios,mweb,android_music,tv_embedded"],
+                # 2: mediaconnect (original)
+                ["best[height<=?720][width<=?1280]",
+                 "youtube:player_client=mediaconnect,android_music,tv_embedded"],
+                # 3: more permissive format selector
+                ["best",
+                 "youtube:player_client=default,ios,mweb,android_music,tv_embedded"],
+                # 4: ios+mweb minimal
+                ["b",
+                 "youtube:player_client=ios,mweb"],
+            ]
+
+            downloaded_file = None
+            direct = None
+            last_v_err = None
+            for fmt, extr in v_strategies:
+                # Try with up to 2 proxies + 1 direct = 3 attempts per strategy
+                attempts_per_strategy = 3 if (_pm_v and _pm_v.is_enabled()) else 1
+                tried: set[str] = set()
+                for attempt in range(attempts_per_strategy):
+                    cur_proxy = None
+                    if attempt < attempts_per_strategy - 1 and _pm_v and _pm_v.is_enabled():
+                        for _ in range(5):
+                            cand = _pm_v.get_proxy()
+                            if not cand:
+                                break
+                            if cand not in tried:
+                                cur_proxy = cand
+                                tried.add(cand)
+                                break
+                    cmd = [
+                        *YTDLP_BIN, "-g", "-f", fmt,
+                        "--extractor-args", extr,
+                        "--no-warnings",
+                        *_cookie_cli_args(),
+                    ]
+                    if cur_proxy:
+                        cmd += ["--proxy", cur_proxy]
+                    cmd.append(f"{link}")
+                    p_label = (f" via proxy {cur_proxy.split('@')[-1]}"
+                               if cur_proxy else " direct")
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        stdout, stderr = await asyncio.wait_for(
+                            proc.communicate(), timeout=25
+                        )
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        last_v_err = f"timeout (fmt={fmt}{p_label})"
+                        if cur_proxy and _pm_v:
+                            _pm_v.mark_bad(cur_proxy)
+                        continue
+                    if proc.returncode == 0 and stdout and stdout.strip().startswith(b"http"):
+                        downloaded_file = stdout.decode().split("\n")[0]
+                        direct = None
+                        _vlog.info(f"voynat SUCCESS via fmt={fmt}{p_label}")
+                        break
+                    err_text = (stderr.decode(errors="replace") or "")[-300:]
+                    last_v_err = f"fmt={fmt}{p_label}: {err_text.strip()}"
+                    _vlog.warning(f"voynat attempt failed — {last_v_err}")
+                    if cur_proxy and _pm_v:
+                        low = err_text.lower()
+                        if _pm_v.is_quota_error(low):
+                            _pm_v.mark_quota_exceeded("voynat quota")
+                            _pm_v.schedule_quota_notice()
+                        elif (_pm_v.is_proxy_connection_error(low)
+                              or "sign in to confirm" in low):
+                            _pm_v.mark_bad(cur_proxy)
+                if downloaded_file:
+                    break
+
+            if not downloaded_file:
+                # ALL strategies failed — raise (NOT return None) so the outer
+                # caller (stream.py) sees a meaningful error instead of
+                # a TypeError when unpacking.
+                raise Exception(
+                    f"voynat: yt-dlp could not produce stream URL. "
+                    f"Last error: {last_v_err or 'unknown'}"
                 )
-                stdout, stderr = await proc.communicate()
-                if stdout:
-                    downloaded_file = stdout.decode().split("\n")[0]
-                    direct = None
-                else:
-                    return
             return downloaded_file, direct
         else:
             # AUDIO PATH — Reordered Feb 2026 (per user request):
