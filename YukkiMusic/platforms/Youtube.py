@@ -231,7 +231,16 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
 
 
 async def _ytsearch(query: str, limit: int = 1):
+    """Search YouTube with in-memory LRU cache (30 min TTL).
+    Repeated searches return INSTANTLY from cache."""
     loop = asyncio.get_running_loop()
+
+    # Cache check — same query → return cached result
+    from YukkiMusic.utils import yt_cache
+    cache_key = f"{query}::{limit}"
+    cached = yt_cache.search_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     def _run():
         try:
@@ -294,7 +303,10 @@ async def _ytsearch(query: str, limit: int = 1):
             })
         return results
 
-    return await loop.run_in_executor(None, _run)
+    results = await loop.run_in_executor(None, _run)
+    if results:
+        yt_cache.search_cache.set(cache_key, results)
+    return results
 
 
 async def shell_cmd(cmd):
@@ -622,12 +634,26 @@ class YouTubeAPI:
             except Exception:
                 _pm = None  # proxy mode unavailable
 
+            # Sticky strategy: try the last-known-good strategy first
+            try:
+                from YukkiMusic.utils import yt_cache
+                sticky = yt_cache.last_good_strategy()
+                if sticky:
+                    # Move sticky strategy to position 0 if present
+                    for i, s in enumerate(strategies):
+                        if s[0] == sticky:
+                            strategies = [s] + strategies[:i] + strategies[i+1:]
+                            break
+            except Exception:
+                yt_cache = None  # type: ignore
+
             last_exc = None
             for label, clients, skip, use_cookies in strategies:
-                # Try with each strategy up to 3 times, rotating proxy on
-                # failure (per user-choice: rotate on error only). Last
-                # attempt always runs WITHOUT proxy (final fallback).
-                proxy_attempts = 3 if (_pm and _pm.is_enabled()) else 1
+                # Try with each strategy up to 2 times, rotating proxy on
+                # failure. Reduced from 3→2 for FASTER failover when many
+                # groups call /play simultaneously. Last attempt always
+                # runs WITHOUT proxy (final fallback per strategy).
+                proxy_attempts = 2 if (_pm and _pm.is_enabled()) else 1
                 current_proxy = None
                 tried_proxies: set[str] = set()
                 strategy_success = False
@@ -662,6 +688,12 @@ class YouTubeAPI:
                         result = _try(opts)
                         if result and os.path.exists(result):
                             log.info(f"audio_dl SUCCESS via: {label}{proxy_label}")
+                            # Remember this strategy for the next request
+                            try:
+                                if yt_cache:
+                                    yt_cache.remember_strategy(label)
+                            except Exception:
+                                pass
                             strategy_success = True
                             return result
                     except Exception as e:
