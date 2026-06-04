@@ -73,7 +73,10 @@ class _ProxyPool:
 
     @property
     def enabled(self) -> bool:
-        return bool(self._api_key) and not self._quota_exceeded
+        # 2026-FIX: Webshare proxy completely disabled — proxy fetches were
+        # causing 15+ second hangs that triggered "Unsupported URL" errors
+        # and >10s playback delays. Direct connection only.
+        return False
 
     # ----- pool management -----
     def _fetch_from_webshare(self) -> list[str]:
@@ -219,14 +222,10 @@ _pool = _ProxyPool()
 
 
 def init(api_key: str | None = None) -> None:
-    """Initialise from explicit api_key OR environment WEBSHARE_API_KEY."""
-    key = api_key if api_key is not None else os.environ.get("WEBSHARE_API_KEY", "")
-    _pool.configure(key)
-    if key:
-        log.info("Webshare proxy: configured with API key. Fetching pool…")
-        _pool.refresh_if_due(force=True)
-    else:
-        log.info("Webshare proxy: disabled (no WEBSHARE_API_KEY)")
+    """2026-FIX: Webshare proxy fully disabled. No API fetch, no startup delay.
+    Direct connection is faster and more reliable in early 2026."""
+    _pool.configure("")  # force-disable
+    log.info("Webshare proxy: DISABLED (2026-fix — direct connection only)")
 
 
 def get_proxy() -> Optional[str]:

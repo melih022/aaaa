@@ -101,6 +101,12 @@ _YDL_BYPASS = {
     "geo_bypass_country": "US",
     "nocheckcertificate": True,
     "source_address": "0.0.0.0",
+    # 2026-FIX: aggressive timeouts so any hanging request bails within ~8s
+    # instead of dragging /play past the 10-second budget.
+    "socket_timeout": 8,
+    "retries": 1,
+    "fragment_retries": 1,
+    "extractor_retries": 1,
     "extractor_args": {
         "youtube": {
             # Modern (Feb 2026) client list — handles SABR + format coverage
@@ -165,6 +171,11 @@ def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
             "geo_bypass": True,
             "geo_bypass_country": "US",
             "source_address": "0.0.0.0",
+            # 2026-FIX: tight timeout — text searches must complete in <10s
+            "socket_timeout": 8,
+            "retries": 1,
+            "fragment_retries": 1,
+            "extractor_retries": 1,
             "extractor_args": {
                 "youtube": {
                     "player_client": [
