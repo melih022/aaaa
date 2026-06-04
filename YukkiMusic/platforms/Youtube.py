@@ -154,22 +154,53 @@ from YukkiMusic.utils.formatters import time_to_seconds
 # through an external service that fetches the audio for us. Endpoint can
 # be overridden via the EXTERNAL_DL_API env variable. Set to "off"/"none"
 # to disable and force pure yt-dlp path.
+#
+# Protocol (two-step, matches the working aaa repo):
+#   1) GET {BASE}/download?url=<video_id>&type=audio
+#      → returns JSON with {"download_token": "..."}
+#   2) GET {BASE}/stream/<video_id>?type=audio
+#      with header "X-Download-Token: <token>"  → binary audio stream
 # ---------------------------------------------------------------------------
-EXTERNAL_DL_API = os.environ.get(
+EXTERNAL_DL_API_BASE = os.environ.get(
     "EXTERNAL_DL_API",
-    "https://shrutibots.site/download",
+    "",  # empty → auto-load from pastebin like aaa does
 ).strip()
+_EXTERNAL_FALLBACK = "https://shrutibots.site"
+_EXTERNAL_PASTEBIN = "https://pastebin.com/raw/rLsBhAQa"
 
 
 def _external_api_enabled() -> bool:
-    val = EXTERNAL_DL_API.lower()
-    return bool(EXTERNAL_DL_API) and val not in ("off", "none", "disabled", "0", "false")
+    val = EXTERNAL_DL_API_BASE.lower()
+    return val not in ("off", "none", "disabled", "0", "false")
+
+
+async def _resolve_external_base() -> str:
+    """Resolve the external API base URL — explicit env > pastebin > fallback."""
+    global EXTERNAL_DL_API_BASE
+    if EXTERNAL_DL_API_BASE and EXTERNAL_DL_API_BASE.lower() not in (
+        "off", "none", "disabled", "0", "false"
+    ):
+        return EXTERNAL_DL_API_BASE.rstrip("/")
+    # Try pastebin
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(_EXTERNAL_PASTEBIN) as resp:
+                if resp.status == 200:
+                    txt = (await resp.text()).strip()
+                    if txt.startswith("http"):
+                        EXTERNAL_DL_API_BASE = txt
+                        return txt.rstrip("/")
+    except Exception:
+        pass
+    EXTERNAL_DL_API_BASE = _EXTERNAL_FALLBACK
+    return _EXTERNAL_FALLBACK.rstrip("/")
 
 
 async def _external_audio_dl(video_id: str) -> str | None:
-    """Download audio via external API. Returns local file path on success,
-    None on failure. Saves to downloads/<id>.mp3 to integrate with the
-    existing cache layer.
+    """Download audio via external API (two-step). Returns local file path on
+    success, None on failure. Saves to downloads/<id>.mp3 to integrate with
+    the existing cache layer.
     """
     if not _external_api_enabled():
         return None
@@ -179,37 +210,46 @@ async def _external_audio_dl(video_id: str) -> str | None:
     if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
         return out_path
     os.makedirs("downloads", exist_ok=True)
-    url = f"{EXTERNAL_DL_API}?url={video_id}&type=audio"
-    timeout = aiohttp.ClientTimeout(total=20)
+
+    base = await _resolve_external_base()
+    timeout = aiohttp.ClientTimeout(total=60)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
+            # Step 1: request a download token
+            params = {"url": video_id, "type": "audio"}
+            async with session.get(f"{base}/download", params=params) as resp:
                 if resp.status != 200:
-                    log.warning(f"external API HTTP {resp.status}")
-                    return None
-                ctype = resp.headers.get("Content-Type", "").lower()
-                # Some APIs return JSON with a direct download URL — handle both
-                if "json" in ctype:
-                    data = await resp.json(content_type=None)
-                    dl_url = (
-                        data.get("download_url")
-                        or data.get("url")
-                        or data.get("link")
+                    log.warning(
+                        f"external API token-fetch HTTP {resp.status} (base={base})"
                     )
-                    if not dl_url:
-                        log.warning(f"external API JSON missing url: {data}")
-                        return None
-                    async with session.get(dl_url) as r2:
-                        if r2.status != 200:
-                            return None
-                        with open(out_path, "wb") as f:
-                            async for chunk in r2.content.iter_chunked(64 * 1024):
-                                f.write(chunk)
-                else:
-                    # Direct binary stream
-                    with open(out_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(64 * 1024):
-                            f.write(chunk)
+                    return None
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception as e:
+                    log.warning(f"external API token-fetch JSON parse failed: {e}")
+                    return None
+                token = data.get("download_token") if isinstance(data, dict) else None
+                if not token:
+                    log.warning(
+                        f"external API returned no download_token (data keys: "
+                        f"{list(data.keys()) if isinstance(data, dict) else type(data)})"
+                    )
+                    return None
+
+            # Step 2: stream the file using the token
+            stream_url = f"{base}/stream/{video_id}?type=audio"
+            stream_timeout = aiohttp.ClientTimeout(total=300)
+            async with session.get(
+                stream_url,
+                headers={"X-Download-Token": token},
+                timeout=stream_timeout,
+            ) as r2:
+                if r2.status != 200:
+                    log.warning(f"external API stream HTTP {r2.status}")
+                    return None
+                with open(out_path, "wb") as f:
+                    async for chunk in r2.content.iter_chunked(16384):
+                        f.write(chunk)
         if os.path.getsize(out_path) < 1024:
             log.warning(
                 f"external API returned tiny file ({os.path.getsize(out_path)}B) — discarding"
@@ -219,7 +259,9 @@ async def _external_audio_dl(video_id: str) -> str | None:
             except Exception:
                 pass
             return None
-        log.info(f"external API SUCCESS: {out_path} ({os.path.getsize(out_path)} bytes)")
+        log.info(
+            f"external API SUCCESS: {out_path} ({os.path.getsize(out_path)} bytes)"
+        )
         return out_path
     except Exception as e:
         log.warning(f"external API failed: {type(e).__name__}: {e}")
