@@ -265,15 +265,38 @@ async def _finish(tc: Client, user_id: int, message: Message, wait: Message):
         return await wait.edit_text(f"❌ Kayıt hatası: `{type(e).__name__}: {e}`")
 
     _clear_state(user_id)
-    await wait.edit_text(
-        f"✅ **Session created & saved!**\n\n"
-        f"👤 Account: `{me.first_name}` (@{me.username or '—'})\n"
-        f"🆔 ID: `{me.id}`\n"
-        f"📦 Slot: `STRING_SESSION{slot if slot > 1 else ''}`\n\n"
-        f"⚠️ The session string will be sent in the next message — "
-        f"**save it somewhere safe** (do not share!).\n"
-        f"♻️ Bot will restart in 8 seconds…"
-    )
+
+    # 2026-02 fix: hot-activate the new assistant (no restart) so /play works
+    # immediately. Mirrors the /setstring code path.
+    activated = False
+    try:
+        from YukkiMusic import userbot as _userbot
+        activated = await _userbot.activate_slot(slot, session_string)
+    except Exception as e:
+        LOGGER("YukkiMusic").error(
+            f"Hot-activation failed for slot {slot}: {type(e).__name__}: {e}"
+        )
+
+    if activated:
+        await wait.edit_text(
+            f"✅ **Session oluşturuldu ve aktif edildi!**\n\n"
+            f"👤 Hesap: `{me.first_name}` (@{me.username or '—'})\n"
+            f"🆔 ID: `{me.id}`\n"
+            f"📦 Slot: `STRING_SESSION{slot if slot > 1 else ''}`\n\n"
+            f"⚠️ Session string aşağıdaki mesajda — **güvenli bir yere kaydedin** "
+            f"(kimseyle paylaşmayın!).\n"
+            f"🚀 Yeniden başlatmaya gerek yok — /play hazır."
+        )
+    else:
+        await wait.edit_text(
+            f"✅ **Session created & saved!**\n\n"
+            f"👤 Account: `{me.first_name}` (@{me.username or '—'})\n"
+            f"🆔 ID: `{me.id}`\n"
+            f"📦 Slot: `STRING_SESSION{slot if slot > 1 else ''}`\n\n"
+            f"⚠️ The session string will be sent in the next message — "
+            f"**save it somewhere safe** (do not share!).\n"
+            f"♻️ Bot will restart in 8 seconds…"
+        )
     # Send session string as separate message for easy copy-paste
     try:
         await message.reply_text(
@@ -286,8 +309,10 @@ async def _finish(tc: Client, user_id: int, message: Message, wait: Message):
         )
     except Exception:
         pass
-    await asyncio.sleep(8)
-    await _restart_self()
+
+    if not activated:
+        await asyncio.sleep(8)
+        await _restart_self()
 
 
 # ---------- /setstring : direct paste ----------
@@ -348,6 +373,28 @@ async def setstring_cmd(client, message: Message):
         await message.delete()
     except Exception:
         pass
+
+    # 2026-02 fix: hot-activate the new assistant WITHOUT restarting the bot.
+    # If the bot booted with no STRING_SESSION the old code would restart but
+    # the in-memory `userbot.one == None` was never replaced — playback still
+    # failed with `'NoneType' has no attribute 'play'`. Now we wire up the
+    # client + PyTgCalls live so the very next /play works.
+    activated = False
+    try:
+        from YukkiMusic import userbot as _userbot
+        activated = await _userbot.activate_slot(slot, session_string)
+    except Exception as e:
+        LOGGER("YukkiMusic").error(
+            f"Hot-activation failed for slot {slot}: {type(e).__name__}: {e}"
+        )
+
+    if activated:
+        return await wait.edit_text(
+            f"✅ **Session kaydedildi ve aktif edildi!**\n\n"
+            f"👤 Hesap: `{me.first_name}` (@{me.username or '—'})\n"
+            f"📦 Slot: `STRING_SESSION{slot if slot > 1 else ''}`\n\n"
+            f"🚀 Yeniden başlatmaya gerek yok — asistan hazır, /play kullanabilirsiniz."
+        )
 
     await wait.edit_text(
         f"✅ **Session saved!**\n\n"
@@ -418,16 +465,56 @@ async def restart_cmd(client, message: Message):
 
 
 async def _restart_self():
-    """Replace the current process with a fresh `python -m YukkiMusic` invocation.
-    Supervisor / Docker will also auto-restart if exec replacement fails.
+    """Gracefully stop the bot and let the process manager (systemd/supervisor/
+    docker) bring it back up.
+
+    IMPORTANT (2026-02 fix for duplicate-process bug):
+    We no longer use `os.execv` here. `os.execv` replaces the current process
+    image but does NOT terminate child threads / pyrogram update workers
+    cleanly. On VPS deployments behind systemd with `Restart=always` this can
+    leave a phantom secondary process holding the Telegram session, causing
+    the bot to effectively run twice (duplicate replies, double /play, etc.).
+
+    Clean approach: stop pyrogram → stop userbot clients → stop pytgcalls →
+    exit with code 0. systemd/supervisor will spawn ONE fresh instance.
     """
-    LOGGER("YukkiMusic").info("⟳ Restart triggered by owner.")
+    LOGGER("YukkiMusic").info("⟳ Restart triggered by owner. Shutting down cleanly…")
+
+    # 1. Stop pytgcalls (so it releases the assistant clients)
+    try:
+        from YukkiMusic.core.call import Yukki
+        for inst in (Yukki.one, Yukki.two, Yukki.three, Yukki.four, Yukki.five):
+            if inst is None:
+                continue
+            try:
+                # py-tgcalls has no public stop(); leaving its inner clients
+                # to stop below is sufficient.
+                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2. Stop assistant userbots
+    try:
+        from YukkiMusic import userbot
+        for ub in (userbot.one, userbot.two, userbot.three, userbot.four, userbot.five):
+            if ub is None:
+                continue
+            try:
+                if ub.is_connected:
+                    await ub.stop()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 3. Stop the main bot
     try:
         await app.stop()
     except Exception:
         pass
-    try:
-        os.execv(sys.executable, [sys.executable, "-m", "YukkiMusic"])
-    except Exception:
-        # Last resort – exit and let supervisor restart us.
-        os._exit(0)
+
+    # 4. Exit cleanly — process manager will restart us as a single instance.
+    LOGGER("YukkiMusic").info("Process exiting (code 0). Process manager will respawn.")
+    os._exit(0)

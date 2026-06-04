@@ -64,6 +64,44 @@ async def init():
         importlib.import_module("YukkiMusic.plugins" + m)
     LOGGER("Yukkimusic.plugins").info("Moduller iceri aktarildi")
 
+    # 2026-02 fix: register the Telegram client commands menu (the blue
+    # "Menu" button next to the chat input) so users see /start /play /help
+    # etc. on a fresh chat. This was previously missing — the bot answered
+    # commands but the menu was empty.
+    try:
+        from pyrogram.types import BotCommand
+        await app.set_bot_commands([
+            BotCommand("start",        "Botu başlat / hoş geldin mesajı"),
+            BotCommand("help",         "Komut listesini göster"),
+            BotCommand("play",         "Şarkı çal (link veya isim)"),
+            BotCommand("vplay",        "Video çal (link veya isim)"),
+            BotCommand("playforce",    "Sırayı atlayıp hemen çal"),
+            BotCommand("vplayforce",   "Video — sırayı atlayıp hemen çal"),
+            BotCommand("pause",        "Çalmayı duraklat"),
+            BotCommand("resume",       "Çalmaya devam et"),
+            BotCommand("skip",         "Sonraki şarkıya geç"),
+            BotCommand("stop",         "Çalmayı durdur"),
+            BotCommand("end",          "Sesli sohbeti bitir"),
+            BotCommand("queue",        "Sıradaki şarkıları göster"),
+            BotCommand("shuffle",      "Sırayı karıştır"),
+            BotCommand("loop",         "Tekrar modunu aç/kapa"),
+            BotCommand("song",         "MP3 / video indir"),
+            BotCommand("lyrics",       "Şarkı sözlerini göster"),
+            BotCommand("search",       "YouTube'da ara"),
+            BotCommand("ping",         "Bot gecikmesini ölç"),
+            BotCommand("stats",        "Bot istatistikleri"),
+            BotCommand("sessions",     "(Sahip) Session slot durumu"),
+            BotCommand("genstring",    "(Sahip) Yeni string-session üret"),
+            BotCommand("setstring",    "(Sahip) Hazır string-session yapıştır"),
+            BotCommand("clearsession", "(Sahip) Session slotunu sil"),
+            BotCommand("restart",      "(Sahip) Botu yeniden başlat"),
+        ])
+        LOGGER("YukkiMusic").info("Bot commands menüsü yüklendi.")
+    except Exception as e:
+        LOGGER("YukkiMusic").warning(
+            f"set_bot_commands başarısız: {type(e).__name__}: {e}"
+        )
+
     if has_assistants:
         try:
             await userbot.start()
