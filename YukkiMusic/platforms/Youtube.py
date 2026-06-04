@@ -7,6 +7,8 @@ import os
 import shutil
 import sys
 
+import aiohttp
+
 # Resolve the yt-dlp invocation once.
 # 2026 fix: Always use `[sys.executable, "-m", "yt_dlp"]` because:
 #   1. systemd/supervisor strips PATH → literal "yt-dlp" lookup fails
@@ -144,6 +146,84 @@ from pyrogram.enums import MessageEntityType
 import config
 from YukkiMusic.utils.database import is_on_off
 from YukkiMusic.utils.formatters import time_to_seconds
+
+
+# ---------------------------------------------------------------------------
+# External downloader API (mirrors melih022/aaa "shrutibots.site" approach)
+# When a VPS IP is blocked by YouTube's bot-check, we route the download
+# through an external service that fetches the audio for us. Endpoint can
+# be overridden via the EXTERNAL_DL_API env variable. Set to "off"/"none"
+# to disable and force pure yt-dlp path.
+# ---------------------------------------------------------------------------
+EXTERNAL_DL_API = os.environ.get(
+    "EXTERNAL_DL_API",
+    "https://shrutibots.site/download",
+).strip()
+
+
+def _external_api_enabled() -> bool:
+    val = EXTERNAL_DL_API.lower()
+    return bool(EXTERNAL_DL_API) and val not in ("off", "none", "disabled", "0", "false")
+
+
+async def _external_audio_dl(video_id: str) -> str | None:
+    """Download audio via external API. Returns local file path on success,
+    None on failure. Saves to downloads/<id>.mp3 to integrate with the
+    existing cache layer.
+    """
+    if not _external_api_enabled():
+        return None
+    import logging
+    log = logging.getLogger("YukkiMusic.external_dl")
+    out_path = os.path.join("downloads", f"{video_id}.mp3")
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
+        return out_path
+    os.makedirs("downloads", exist_ok=True)
+    url = f"{EXTERNAL_DL_API}?url={video_id}&type=audio"
+    timeout = aiohttp.ClientTimeout(total=20)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    log.warning(f"external API HTTP {resp.status}")
+                    return None
+                ctype = resp.headers.get("Content-Type", "").lower()
+                # Some APIs return JSON with a direct download URL — handle both
+                if "json" in ctype:
+                    data = await resp.json(content_type=None)
+                    dl_url = (
+                        data.get("download_url")
+                        or data.get("url")
+                        or data.get("link")
+                    )
+                    if not dl_url:
+                        log.warning(f"external API JSON missing url: {data}")
+                        return None
+                    async with session.get(dl_url) as r2:
+                        if r2.status != 200:
+                            return None
+                        with open(out_path, "wb") as f:
+                            async for chunk in r2.content.iter_chunked(64 * 1024):
+                                f.write(chunk)
+                else:
+                    # Direct binary stream
+                    with open(out_path, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            f.write(chunk)
+        if os.path.getsize(out_path) < 1024:
+            log.warning(
+                f"external API returned tiny file ({os.path.getsize(out_path)}B) — discarding"
+            )
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+            return None
+        log.info(f"external API SUCCESS: {out_path} ({os.path.getsize(out_path)} bytes)")
+        return out_path
+    except Exception as e:
+        log.warning(f"external API failed: {type(e).__name__}: {e}")
+        return None
 
 
 def _ytdl_extract(query: str, limit: int = 1, flat: bool = False):
@@ -970,10 +1050,31 @@ class YouTubeAPI:
             return downloaded_file, direct
         else:
             # AUDIO PATH — Reordered Feb 2026 (per user request):
-            # 1) Try direct file download first (simple yt-dlp + cookies = most
-            #    reliable; matches the working reference repo melih022/google).
-            # 2) Only if download fails, fall back to -g streaming URL with
-            #    multiple format/client strategies.
+            # 0) EXTERNAL API FIRST (mirrors melih022/aaa) — sidesteps the
+            #    YouTube "Sign in to confirm you're not a bot" trap that
+            #    yt-dlp hits on datacenter IPs. Only tries if the API is
+            #    enabled and we have a video ID.
+            # 1) Direct file download via yt-dlp (with cookies / multi-client).
+            # 2) Fall back to -g streaming URL strategies.
+            last_err = ""
+            # --- Step 0: external API ---
+            if _external_api_enabled():
+                vid = None
+                # Extract YouTube video ID from common URL formats
+                m = re.search(
+                    r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})",
+                    link,
+                )
+                if m:
+                    vid = m.group(1)
+                elif re.match(r"^[A-Za-z0-9_-]{11}$", link):
+                    vid = link
+                if vid:
+                    ext_path = await _external_audio_dl(vid)
+                    if ext_path and os.path.exists(ext_path):
+                        return ext_path, True
+
+            # --- Step 1: yt-dlp direct download ---
             try:
                 downloaded_file = await loop.run_in_executor(None, audio_dl)
                 if downloaded_file and os.path.exists(downloaded_file):
@@ -982,6 +1083,7 @@ class YouTubeAPI:
                 last_err = f"audio_dl: {type(e).__name__}: {str(e)[:300]}"
             else:
                 last_err = "audio_dl returned no file"
+
 
             # Streaming-URL fallback chain — verified order Jun 2026:
             # classic combo first (most reliable on datacenter IPs).
